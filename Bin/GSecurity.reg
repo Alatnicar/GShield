@@ -270,6 +270,8 @@ Windows Registry Editor Version 5.00
 "Enabled"=dword:00000000
 
 [HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy\FirewallRules]
+"{111C64B9-0D47-43E4-86A2-7A16572491F3}"="v2.33|Action=Block|Active=TRUE|Dir=Out|Name=rule|LUAuth=O:LSD:(D;;CC;;;S-1-2-1)(A;;CC;;;AU)|"
+"{7A301807-73A3-4248-8F30-F4250472835E}"="v2.33|Action=Block|Active=TRUE|Dir=In|Name=rule|LUAuth=O:LSD:(A;;CC;;;AU)|"
 "InternetIn"="v2.33|Action=Block|Active=TRUE|Dir=In|RA42=IntErnet|RA62=IntErnet|Name=Block|Desc=Block everything incoming from Internet|"
 "RemoteDesktop-Shadow-In-TCP"="v2.28|Action=Block|Active=TRUE|Dir=In|Protocol=6|App=%SystemRoot%\\system32\\RdpSa.exe|Name=@FirewallAPI.dll,-28778|Desc=@FirewallAPI.dll,-28779|EmbedCtxt=@FirewallAPI.dll,-28752|Edge=TRUE|Defer=App|"
 "RemoteDesktop-UserMode-In-TCP"="v2.28|Action=Block|Active=TRUE|Dir=In|Protocol=6|LPort=3389|App=%SystemRoot%\\system32\\svchost.exe|Svc=termservice|Name=@FirewallAPI.dll,-28775|Desc=@FirewallAPI.dll,-28756|EmbedCtxt=@FirewallAPI.dll,-28752|"
@@ -1716,6 +1718,8 @@ Windows Registry Editor Version 5.00
 "LogSuccessfulConnections"=dword:00000001
 
 [HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\WindowsFirewall\FirewallRules]
+"{111C64B9-0D47-43E4-86A2-7A16572491F3}"="v2.33|Action=Block|Active=TRUE|Dir=Out|Name=rule|LUAuth=O:LSD:(D;;CC;;;S-1-2-1)(A;;CC;;;AU)|"
+"{7A301807-73A3-4248-8F30-F4250472835E}"="v2.33|Action=Block|Active=TRUE|Dir=In|Name=rule|LUAuth=O:LSD:(A;;CC;;;AU)|"
 "InternetIn"="v2.33|Action=Block|Active=TRUE|Dir=In|RA42=IntErnet|RA62=IntErnet|Name=Block|Desc=Block everything incoming from Internet|"
 "RemoteDesktop-Shadow-In-TCP"="v2.28|Action=Block|Active=TRUE|Dir=In|Protocol=6|App=%SystemRoot%\\system32\\RdpSa.exe|Name=@FirewallAPI.dll,-28778|Desc=@FirewallAPI.dll,-28779|EmbedCtxt=@FirewallAPI.dll,-28752|Edge=TRUE|Defer=App|"
 "RemoteDesktop-UserMode-In-TCP"="v2.28|Action=Block|Active=TRUE|Dir=In|Protocol=6|LPort=3389|App=%SystemRoot%\\system32\\svchost.exe|Svc=termservice|Name=@FirewallAPI.dll,-28775|Desc=@FirewallAPI.dll,-28756|EmbedCtxt=@FirewallAPI.dll,-28752|"
