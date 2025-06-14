@@ -2,6 +2,23 @@ Windows Registry Editor Version 5.00
 
 ; GSecurity by Gorstak
 
+[HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Cryptography\Wintrust\Config]
+"EnableCertPaddingCheck"="1"
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\Wow6432Node\Microsoft\Cryptography\Wintrust]
+"EnableCfg"="1"
+
+[HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Lsa]
+"RunAsPPL"=dword:00000001
+"DisableDomainCreds"=dword:00000001
+
+[HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\SecurityProviders\WDigest]
+"Negotiate"=dword:00000000
+"UseLogonCredential"=dword:00000000
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon]
+"CachedLogonsCount"=dword:00000000
+
 [HKEY_CURRENT_USER\Software\microsoft\Windows\CurrentVersion\Internet Settings]
 "AutoConfigURL"="https://raw.githubusercontent.com/Alatnicar/Pac/refs/heads/main/BlockAds.pac"
 "MaxConnectionsPer1_0Server"=dword:0000000a
