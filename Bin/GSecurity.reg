@@ -860,11 +860,11 @@ Windows Registry Editor Version 5.00
 "EnableMediaRouter"=dword:00000000
 "EnableOnlineRevocationChecks"=dword:00000001
 "ImportAutofillFormData"=dword:00000000
-"ImportSavedPasswords"=dword:00000000
+"ImportSavedPasswords"=dword:00000001
 "IncognitoModeAvailability"=dword:00000001
 "MetricsReportingEnabled"=dword:00000000
 "NetworkPredictionOptions"=dword:00000002
-"PasswordManagerEnabled"=dword:00000000
+"PasswordManagerEnabled"=dword:00000001
 "PromptForDownloadLocation"=dword:00000001
 "QuicAllowed"=dword:00000000
 "RemoteAccessHostFirewallTraversal"=dword:00000000
@@ -941,7 +941,7 @@ Windows Registry Editor Version 5.00
 "ImportHomepage"=dword:00000000
 "ImportOpenTabs"=dword:00000000
 "ImportPaymentInfo"=dword:00000000
-"ImportSavedPasswords"=dword:00000000
+"ImportSavedPasswords"=dword:00000001
 "ImportSearchEngine"=dword:00000000
 "ImportShortcuts"=dword:00000000
 "InPrivateModeAvailability"=dword:00000001
@@ -953,7 +953,7 @@ Windows Registry Editor Version 5.00
 "ManagedSearchEngines"="[{\"allow_search_engine_discovery\": false},{\"is_default\": true,\"name\": \"Microsoft Bing\",\"keyword\": \"bing\",\"search_url\": \"https://www.bing.com/search?q={searchTerms}\"},{\"name\": \"Google\",\"keyword\": \"google\",\"search_url\": \"https://www.google.com/search?q={searchTerms}\"}]"
 "NativeMessagingUserLevelHosts"=dword:00000000
 "NetworkPredictionOptions"=dword:00000002
-"PasswordManagerEnabled"=dword:00000000
+"PasswordManagerEnabled"=dword:00000001
 "PaymentMethodQueryEnabled"=dword:00000000
 "PersonalizationReportingEnabled"=dword:00000000
 "PreventSmartScreenPromptOverride"=dword:00000000
@@ -3268,7 +3268,7 @@ Windows Registry Editor Version 5.00
 [HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\safer]
 
 [HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\safer\CodeIdentifiers]
-"DefaultLevel"=dword:00000000
+"DefaultLevel"=dword:00040000
 "TransparentEnabled"=dword:00000001
 "PolicyScope"=dword:00000000
 "AuthenticodeEnabled"=dword:00040000
