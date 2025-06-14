@@ -2,8 +2,8 @@
 
 :: Script Metadata
 set "SCRIPT_NAME=GSecurity"
-set "SCRIPT_VERSION=3.6.1"
-set "SCRIPT_UPDATED=01.06.2025"
+set "SCRIPT_VERSION=3.8.0"
+set "SCRIPT_UPDATED=14.06.2025"
 set "AUTHOR=Gorstak"
 Title GSecurity && Color 0b
 
@@ -41,23 +41,23 @@ for /f "tokens=*" %%A in ('dir /b /o:n *.ps1') do (
     )
 )
 
-:: Step 7: Execute Registry (.reg) files alphabetically
-echo Executing Registry files...
-for /f "tokens=*" %%C in ('dir /b /o:n *.reg') do (
-    echo Merging %%C...
-    reg import "%%C"
-    if %ERRORLEVEL% NEQ 0 (
-        echo Error: Failed to merge %%C with exit code %ERRORLEVEL%
-    )
-)
-
-:: Step 8: Execute CMD (.cmd) files alphabetically
+:: Step 7: Execute CMD (.cmd) files alphabetically
 echo Executing CMD scripts...
 for /f "tokens=*" %%B in ('dir /b /o:n *.cmd') do (
     echo Running %%B...
     call "%%B"
     if %ERRORLEVEL% NEQ 0 (
         echo Error: %%B failed with exit code %ERRORLEVEL%
+    )
+)
+
+:: Step 8: Execute Registry (.reg) files alphabetically
+echo Executing Registry files...
+for /f "tokens=*" %%C in ('dir /b /o:n *.reg') do (
+    echo Merging %%C...
+    reg import "%%C"
+    if %ERRORLEVEL% NEQ 0 (
+        echo Error: Failed to merge %%C with exit code %ERRORLEVEL%
     )
 )
 
