@@ -2242,10 +2242,10 @@ CE,1C,E9,00,00,00,04,67,41,4D,41,00,00,B1,8F,0B,FC,61,05,00,00,00,5D,49,44,\
 "Value"="Deny"
 
 [HKEY_LOCAL_MACHINE\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\bluetooth]
-"Value"="Allow"
+"Value"="Deny"
 
 [HKEY_LOCAL_MACHINE\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\bluetoothSync]
-"Value"="Allow"
+"Value"="Deny"
 
 [HKEY_LOCAL_MACHINE\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\cellularData]
 "Value"="Deny"
@@ -2254,13 +2254,13 @@ CE,1C,E9,00,00,00,04,67,41,4D,41,00,00,B1,8F,0B,FC,61,05,00,00,00,5D,49,44,\
 "Value"="Deny"
 
 [HKEY_LOCAL_MACHINE\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone]
-"Value"="Allow"
+"Value"="Deny"
 
 [HKEY_LOCAL_MACHINE\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\musicLibrary]
 "Value"="Deny"
 
 [HKEY_LOCAL_MACHINE\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\webcam]
-"Value"="Allow"
+"Value"="Deny"
 
 [HKEY_LOCAL_MACHINE\Software\Microsoft\Windows\CurrentVersion\Component Based Servicing]
 "EnableLog"=dword:00000000
@@ -3114,11 +3114,11 @@ FB,33,D1,7A,C9,DD,DB,01
 "LetAppsAccessContacts_ForceAllowTheseApps"=hex(7):00,00
 "LetAppsAccessMicrophone_ForceAllowTheseApps"=hex(7):00,00
 "LetAppsAccessMicrophone_UserInControlOfTheseApps"=hex(7):00,00
-"LetAppsAccessMicrophone"=dword:00000001
+"LetAppsAccessMicrophone"=dword:00000002
 "LetAppsAccessCamera_ForceDenyTheseApps"=hex(7):00,00
 "LetAppsAccessCamera_ForceAllowTheseApps"=hex(7):00,00
 "LetAppsAccessCamera_UserInControlOfTheseApps"=hex(7):00,00
-"LetAppsAccessCamera"=dword:00000001
+"LetAppsAccessCamera"=dword:00000002
 "LetAppsRunInBackground"=dword:00000002
 "LetAppsActivateWithVoiceAboveLock"=dword:00000002
 "LetAppsAccessCallHistory"=dword:00000002
