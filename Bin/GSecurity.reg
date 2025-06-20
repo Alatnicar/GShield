@@ -750,10 +750,6 @@ D2,5A,29,78,2E,00,00,00,80,C6,15,19,0A,00,00,00,00,00,00,00,00,00,00,00,00,\
 [HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Policies\NonEnum]
 "{645FF040-5081-101B-9F08-00AA002F954E}"=dword:00000001
 
-[HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Policies\System]
-"DisableTaskMgr"=dword:00000000
-"DisableRegistryTools"=dword:00000001
-
 [HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Privacy]
 "TailoredExperiencesWithDiagnosticDataEnabled"=dword:00000000
 
@@ -9581,25 +9577,6 @@ F3,04,81,00,AD,00,35,BF,00,00,AD,00,BC,00,5E,00,00,00,6F,6E,65,63,6F,72,65,\
 "UseWindowsUpdate"=dword:00000002
 @=""
 
-[HKEY_LOCAL_MACHINE\Software\Microsoft\Windows\CurrentVersion\Policies\System]
-"DisplayLastLogonInfo"=dword:00000000
-"VerboseStatus"=dword:00000001
-"DisableRegistryTools"=dword:00000001
-"Allow-LogonScript-NetbiosDisabled"=dword:00000000
-@=""
-"ConsentPromptBehaviorAdmin"=dword:00000002
-"EnableLinkedConnections"=dword:00000001
-"dontdisplaylastusername"=dword:00000001
-"legalnoticetext"=""
-"DisableAutomaticRestartSignOn"=dword:00000001
-"DisableShutdownNamedPipe"=dword:00000001
-"EnableMPR"=dword:00000000
-"MSAOptional"=dword:00000001
-"NoDispCPL"=dword:00000000
-"SynchronousUserGroupPolicy"=dword:00000001
-"DisableCAD"=dword:00000001
-"FilterAdministratorToken"=dword:00000000
-
 [HKEY_LOCAL_MACHINE\Software\Microsoft\Windows\CurrentVersion\Policies\System\Audit]
 @=""
 "ProcessCreationIncludeCmdLine_Enabled"=dword:00000001
@@ -15881,3 +15858,26 @@ FF,FF,FF,FF
 "BypassTPMCheck"=dword:00000001
 "BypassStorageCheck"=dword:00000001
 "BypassRAMCheck"=dword:00000001
+
+[HKEY_LOCAL_MACHINE\Software\Microsoft\Windows\CurrentVersion\Policies\System]
+"DisplayLastLogonInfo"=dword:00000000
+"VerboseStatus"=dword:00000001
+"DisableRegistryTools"=dword:00000001
+"Allow-LogonScript-NetbiosDisabled"=dword:00000000
+@=""
+"ConsentPromptBehaviorAdmin"=dword:00000002
+"EnableLinkedConnections"=dword:00000001
+"dontdisplaylastusername"=dword:00000001
+"legalnoticetext"=""
+"DisableAutomaticRestartSignOn"=dword:00000001
+"DisableShutdownNamedPipe"=dword:00000001
+"EnableMPR"=dword:00000000
+"MSAOptional"=dword:00000001
+"NoDispCPL"=dword:00000000
+"SynchronousUserGroupPolicy"=dword:00000001
+"DisableCAD"=dword:00000001
+"FilterAdministratorToken"=dword:00000000
+
+[HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Policies\System]
+"DisableTaskMgr"=dword:00000000
+"DisableRegistryTools"=dword:00000001
