@@ -65,12 +65,12 @@ function Set-MediaSafeSettings {
 
     # Disable auto-play in Firefox
     $FirefoxProfilesPath = "$env:APPDATA\Mozilla\Firefox\Profiles\*.default-release"
-    $FirefoxPrefsPath = Get-ChildItem $FirefoxProfilesPath -Directory | ForEach-Object { Join-Path $_.FullName "prefs.js" }
+    $FirefoxPrefsPath = Get-ChildItem -Path $FirefoxProfilesPath -Directory | ForEach-Object { Join-Path -Path $_.FullName -ChildPath "prefs.js" }
     if ($FirefoxPrefsPath -and (Test-Path $FirefoxPrefsPath)) {
         try {
             $PrefsContent = Get-Content $FirefoxPrefsPath -Raw
             $PrefsContent += "`nuser_pref(`"media.autoplay.default`", 1);`nuser_pref(`"media.autoplay.enabled`", false);"
-            Set-Content $FirefoxPrefsPath -Value $PrefsContent
+            Set-Content -Path $FirefoxPrefsPath -Value $PrefsContent
             Write-Log "Disabled Firefox auto-play."
         } catch {
             Write-Log "Error disabling Firefox auto-play: $_" -EntryType "Warning"
@@ -288,7 +288,6 @@ function Register-SystemLogonScript {
     }
 
     try {
-        # Use -Arguments instead of -ArgumentList for compatibility
         $action = New-ScheduledTaskAction -Execute "powershell.exe" -Arguments "-ExecutionPolicy Bypass -File `"$targetPath`""
         if (-not $action) {
             throw "Failed to create scheduled task action."
@@ -296,7 +295,6 @@ function Register-SystemLogonScript {
         $trigger = New-ScheduledTaskTrigger -AtLogon
         $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
 
-        # Clean up any existing task
         Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
         Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Principal $principal -ErrorAction Stop
         Write-Log "Scheduled task '$TaskName' created to run at user logon under SYSTEM."
@@ -447,85 +445,27 @@ function Detect-SuspiciousSystemProcesses {
 
 # Terminate potential web servers (including rootkits)
 function Detect-And-Terminate-WebServers {
-    $webServerProcesses = @(
-        "httpd", "apache", "apache2", "nginx", "iisexpress", "w3wp", "tomcat", "jetty",
-        "node", "python", "ruby", "php-fpm", "lighttpd", "cherokee", "uwsgi", "gunicorn",
-        "http", "web", "server", "daemon"
-    )
-    $minimalSafeProcesses = @("System", "smss", "csrss")
+        $lanPrefix = "192.168."
 
-    $connections = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue
-    if (-not $connections) {
-        Write-Log "No TCP listening connections detected. Terminating all non-critical processes." -EntryType "Warning"
-        Get-Process | Where-Object { $_.ProcessName -notin $minimalSafeProcesses } | ForEach-Object {
+        $connections = Get-NetTCPConnection | Where-Object {
+            $_.RemoteAddress -like "$lanPrefix*"
+        }
+
+        $lanProcIds = $connections.OwningProcess | Sort-Object -Unique
+
+        foreach ($procId in $lanProcIds) {
             try {
-                Write-Log "Terminating process: $($_.ProcessName) (PID: $($_.Id))"
-                Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
-                Write-Log "Terminated process: $($_.ProcessName)"
+                $proc = Get-Process -Id $procId -ErrorAction Stop
+                Write-Host "Killing process: $($proc.ProcessName) (PID: $procId) connected to LAN"
+                Stop-Process -Id $procId -Force
             } catch {
-                Write-Log "Error terminating process $($_.ProcessName) (PID: $($_.Id)): $_" -EntryType "Warning"
+                Write-Warning "Could not kill process with PID $procId - $_"
             }
         }
-        return
-    }
 
-    $suspiciousPids = @{}
-    foreach ($connection in $connections) {
-        try {
-            $process = Get-Process -Id $connection.OwningProcess -ErrorAction SilentlyContinue
-            if ($process) {
-                $port = $connection.LocalPort
-                $processName = $process.ProcessName
-                $processId = $process.Id
-
-                $isSuspicious = $false
-                if ($webServerProcesses -contains $processName -or $processName -match ($webServerProcesses -join "|")) {
-                    $isSuspicious = $true
-                } else {
-                    $netStats = Get-NetAdapterStatistics | Where-Object { $_.ReceivedBytes -gt 1MB -or $_.SentBytes -gt 1MB }
-                    if ($netStats) {
-                        $isSuspicious = $true
-                    }
-                    $portCount = ($connections | Where-Object { $_.OwningProcess -eq $processId }).Count
-                    if ($portCount -gt 1) {
-                        $isSuspicious = $true
-                    }
-                }
-
-                if ($isSuspicious) {
-                    $existingPorts = if ($suspiciousPids[$processId] -and $suspiciousPids[$processId].Ports) { $suspiciousPids[$processId].Ports } else { @() }
-                    $suspiciousPids[$processId] = @{
-                        ProcessName = $processName
-                        Ports = @($port) + $existingPorts
-                    }
-                    Write-Log "Suspicious process detected: $processName (PID: $processId) listening on port $port"
-                }
-            }
-        } catch {
-            Write-Log "Error analyzing process on port $($connection.LocalPort): $_" -EntryType "Warning"
-        }
-    }
-
-    foreach ($processId in $suspiciousPids.Keys) {
-        $processInfo = $suspiciousPids[$processId]
-        try {
-            Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue
-            Write-Log "Terminated suspicious process: $($processInfo.ProcessName) (PID: $processId) on ports $($processInfo.Ports -join ', ')"
-        } catch {
-            Write-Log "Error terminating process $($processInfo.ProcessName) (PID: $processId): $_" -EntryType "Warning"
-        }
-    }
-
-    Get-Process | Where-Object { $webServerProcesses -contains $_.ProcessName -or $_.ProcessName -match ($webServerProcesses -join "|") } | ForEach-Object {
-        try {
-            Write-Log "Web server process detected: $($_.ProcessName) (PID: $($_.Id))"
-            Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
-            Write-Log "Terminated web server process: $($_.ProcessName)"
-        } catch {
-            Write-Log "Error terminating web server process $($_.ProcessName): $_" -EntryType "Warning"
-        }
-    }
+        Start-Sleep -Seconds 10
 }
+
 
 # Terminate all virtual machine processes
 function Stop-VirtualMachines {
