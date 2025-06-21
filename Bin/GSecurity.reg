@@ -134,6 +134,16 @@ Windows Registry Editor Version 5.00
 "SaferFlags"=dword:00000000
 "ItemData"="-Embedding"
 
+[HKEY_LOCAL_MACHINE\Software\Policies\Microsoft\Windows\safer\CodeIdentifiers\0\Paths\{00000000-0000-0000-0000-000000000003}]
+"Description"=""
+"SaferFlags"=dword:00000000
+"ItemData"="filecoauth.exe"
+
+[HKEY_LOCAL_MACHINE\Software\Policies\Microsoft\Windows\safer\CodeIdentifiers\0\Paths\{00000000-0000-0000-0000-000000000004}]
+"Description"=""
+"SaferFlags"=dword:00000000
+"ItemData"="microsoft.sharepoint.exe"
+
 [-HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\SRPV2]
 
 [HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\SrpV2]
