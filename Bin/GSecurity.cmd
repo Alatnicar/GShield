@@ -3,7 +3,7 @@
 :: Perms
 icacls "%systemdrive%\Users" /remove "Everyone"
 icacls "%systemdrive%\Users\Public" /inheritance:r
-icacls "%systemdrive%\Users\Public\Desktop" /setowner "console logon" /t
+icacls "%systemdrive%\Users\Public" /setowner "console logon" /t
 icacls "%USERPROFILE%\" /setowner "%username%" /t /c /l
 icacls "%USERPROFILE%\" /remove "System" /t /c /l
 icacls "%USERPROFILE%\" /remove "Administrators" /t /c /l
