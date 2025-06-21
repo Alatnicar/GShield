@@ -2,7 +2,6 @@
 
 :: Perms
 icacls "%systemdrive%\Users" /remove "Everyone"
-takeown /f "%systemdrive%\Users\Public /A
 icacls "%systemdrive%\Users\Public" /reset
 icacls "%systemdrive%\Users\Public" /inheritance:r
 icacls "%systemdrive%\Users\Public" /setowner "console logon" /t
