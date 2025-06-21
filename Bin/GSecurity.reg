@@ -1,8 +1,5 @@
 Windows Registry Editor Version 5.00
 
-[HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Internet Settings]
-"AutoConfigURL"="https://raw.githubusercontent.com/Alatnicar/Pac/refs/heads/main/BlockAds.pac"
-
 ; Restrictions
 
 [HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Srp\Gp]
@@ -895,7 +892,7 @@ Windows Registry Editor Version 5.00
 "MitigationOptions"=dword:00000031
 
 [HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Internet Settings]
-"AutoConfigURL"="https://raw.githubusercontent.com/Zabranjeno/Pac/refs/heads/main/BlockAds.pac"
+"AutoConfigURL"="https://raw.githubusercontent.com/Alatnicar/Pac/refs/heads/main/BlockAds.pac"
 
 [HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\WSMAN\Service]
 "allow_remote_requests"=dword:00000000
