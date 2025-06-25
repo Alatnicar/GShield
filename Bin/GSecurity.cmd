@@ -322,6 +322,33 @@ for /f "tokens=*" %%u in ('net user ^| findstr /i /c:"User" ^| find /v "command 
 )
 reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v EnableLUA /t REG_DWORD /d 1 /f
 
+:: Bios tweaks
+bcdedit /set nx AlwaysOff
+bcdedit /set ems No
+bcdedit /set bootems No
+bcdedit /set integrityservices disable
+bcdedit /set tpmbootentropy ForceDisable
+bcdedit /set bootmenupolicy Legacy
+bcdedit /set debug No
+bcdedit /set disableelamdrivers Yes
+bcdedit /set isolatedcontext No
+bcdedit /set allowedinmemorysettings 0x0
+bcdedit /set vm NO
+bcdedit /set vsmlaunchtype Off
+bcdedit /set configaccesspolicy Default
+bcdedit /set MSI Default
+bcdedit /set usephysicaldestination No
+bcdedit /set usefirmwarepcisettings No
+bcdedit /set sos no
+bcdedit /set pae ForceDisable
+bcdedit /set tscsyncpolicy legacy
+bcdedit /set hypervisorlaunchtype off
+bcdedit /set useplatformclock false
+bcdedit /set useplatformtick no
+bcdedit /set disabledynamictick yes
+bcdedit /set x2apicpolicy disable
+bcdedit /set uselegacyapicmode yes
+
     goto :eof
 :cleanup
     popd
