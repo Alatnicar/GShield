@@ -1922,14 +1922,25 @@ function Invoke-TerminateWebServers {
     try {
         $connections = Get-NetTCPConnection | Where-Object { $_.RemoteAddress -like "$lanPrefix*" }
         $lanProcIds = $connections.OwningProcess | Sort-Object -Unique
-        
-        foreach ($lap in $lanProcIds) {
+
+        foreach ($pid in $lanProcIds) {
             try {
-                $proc = Get-Process -Id $lap -ErrorAction Stop
-                Write-Log "Terminating process: $($proc.ProcessName) (PID: $lap) connected to LAN"
-                Stop-Process -Id $lap -Force
+                $proc = Get-Process -Id $pid -ErrorAction Stop
+                $exePath = $proc.Path
+
+                if ($exePath) {
+                    $signature = Get-AuthenticodeSignature -FilePath $exePath
+                    if ($signature.Status -ne 'Valid') {
+                        Write-Log "Terminating UNSIGNED process: $($proc.ProcessName) (PID: $pid) connected to LAN"
+                        Stop-Process -Id $pid -Force
+                    } else {
+                        Write-Log "Skipping signed process: $($proc.ProcessName) (PID: $pid)"
+                    }
+                } else {
+                    Write-Log "Unable to determine path for process: $($proc.ProcessName) (PID: $pid)" -EntryType "Warning"
+                }
             } catch {
-                Write-Log "Error terminating process PID $lap`: $($_.ToString())" -EntryType "Warning"
+                Write-Log "Error processing PID $pid`: $($_.ToString())" -EntryType "Warning"
             }
         }
     } catch {
