@@ -323,31 +323,31 @@ for /f "tokens=*" %%u in ('net user ^| findstr /i /c:"User" ^| find /v "command 
 reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v EnableLUA /t REG_DWORD /d 1 /f
 
 :: Bios tweaks
-bcdedit /set nx AlwaysOff
-bcdedit /set ems No
-bcdedit /set bootems No
-bcdedit /set integrityservices disable
-bcdedit /set tpmbootentropy ForceDisable
-bcdedit /set bootmenupolicy Legacy
-bcdedit /set debug No
-bcdedit /set disableelamdrivers Yes
-bcdedit /set isolatedcontext No
-bcdedit /set allowedinmemorysettings 0x0
-bcdedit /set vm NO
-bcdedit /set vsmlaunchtype Off
-bcdedit /set configaccesspolicy Default
-bcdedit /set MSI Default
-bcdedit /set usephysicaldestination No
-bcdedit /set usefirmwarepcisettings No
-bcdedit /set sos no
-bcdedit /set pae ForceDisable
-bcdedit /set tscsyncpolicy legacy
-bcdedit /set hypervisorlaunchtype off
-bcdedit /set useplatformclock false
-bcdedit /set useplatformtick no
-bcdedit /set disabledynamictick yes
-bcdedit /set x2apicpolicy disable
-bcdedit /set uselegacyapicmode yes
+%windir%\system32\bcdedit /set nx AlwaysOff
+%windir%\system32\bcdedit /set ems No
+%windir%\system32\bcdedit /set bootems No
+%windir%\system32\bcdedit /set integrityservices disable
+%windir%\system32\bcdedit /set tpmbootentropy ForceDisable
+%windir%\system32\bcdedit /set bootmenupolicy Legacy
+%windir%\system32\bcdedit /set debug No
+%windir%\system32\bcdedit /set disableelamdrivers Yes
+%windir%\system32\bcdedit /set isolatedcontext No
+%windir%\system32\bcdedit /set allowedinmemorysettings 0x0
+%windir%\system32\bcdedit /set vm NO
+%windir%\system32\bcdedit /set vsmlaunchtype Off
+%windir%\system32\bcdedit /set configaccesspolicy Default
+%windir%\system32\bcdedit /set MSI Default
+%windir%\system32\bcdedit /set usephysicaldestination No
+%windir%\system32\bcdedit /set usefirmwarepcisettings No
+%windir%\system32\bcdedit /set sos no
+%windir%\system32\bcdedit /set pae ForceDisable
+%windir%\system32\bcdedit /set tscsyncpolicy legacy
+%windir%\system32\bcdedit /set hypervisorlaunchtype off
+%windir%\system32\bcdedit /set useplatformclock false
+%windir%\system32\bcdedit /set useplatformtick no
+%windir%\system32\bcdedit /set disabledynamictick yes
+%windir%\system32\bcdedit /set x2apicpolicy disable
+%windir%\system32\bcdedit /set uselegacyapicmode yes
 
     goto :eof
 :cleanup
