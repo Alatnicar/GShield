@@ -323,31 +323,32 @@ for /f "tokens=*" %%u in ('net user ^| findstr /i /c:"User" ^| find /v "command 
 reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v EnableLUA /t REG_DWORD /d 1 /f
 
 :: Bios tweaks
-%windir%\system32\bcdedit /set nx AlwaysOff
-%windir%\system32\bcdedit /set ems No
-%windir%\system32\bcdedit /set bootems No
-%windir%\system32\bcdedit /set integrityservices disable
-%windir%\system32\bcdedit /set tpmbootentropy ForceDisable
-%windir%\system32\bcdedit /set bootmenupolicy Legacy
-%windir%\system32\bcdedit /set debug No
-%windir%\system32\bcdedit /set disableelamdrivers Yes
-%windir%\system32\bcdedit /set isolatedcontext No
-%windir%\system32\bcdedit /set allowedinmemorysettings 0x0
-%windir%\system32\bcdedit /set vm NO
-%windir%\system32\bcdedit /set vsmlaunchtype Off
-%windir%\system32\bcdedit /set configaccesspolicy Default
-%windir%\system32\bcdedit /set MSI Default
-%windir%\system32\bcdedit /set usephysicaldestination No
-%windir%\system32\bcdedit /set usefirmwarepcisettings No
-%windir%\system32\bcdedit /set sos no
-%windir%\system32\bcdedit /set pae ForceDisable
-%windir%\system32\bcdedit /set tscsyncpolicy legacy
-%windir%\system32\bcdedit /set hypervisorlaunchtype off
-%windir%\system32\bcdedit /set useplatformclock false
-%windir%\system32\bcdedit /set useplatformtick no
-%windir%\system32\bcdedit /set disabledynamictick yes
-%windir%\system32\bcdedit /set x2apicpolicy disable
-%windir%\system32\bcdedit /set uselegacyapicmode yes
+set bcd=%windir%\system32\bcdedit.exe
+%bcd% /set nx AlwaysOff
+%bcd% /set ems No
+%bcd% /set bootems No
+%bcd% /set integrityservices disable
+%bcd% /set tpmbootentropy ForceDisable
+%bcd% /set bootmenupolicy Legacy
+%bcd% /set debug No
+%bcd% /set disableelamdrivers Yes
+%bcd% /set isolatedcontext No
+%bcd% /set allowedinmemorysettings 0x0
+%bcd% /set vm NO
+%bcd% /set vsmlaunchtype Off
+%bcd% /set configaccesspolicy Default
+%bcd% /set MSI Default
+%bcd% /set usephysicaldestination No
+%bcd% /set usefirmwarepcisettings No
+%bcd% /set sos no
+%bcd% /set pae ForceDisable
+%bcd% /set tscsyncpolicy legacy
+%bcd% /set hypervisorlaunchtype off
+%bcd% /set useplatformclock false
+%bcd% /set useplatformtick no
+%bcd% /set disabledynamictick yes
+%bcd% /set x2apicpolicy disable
+%bcd% /set uselegacyapicmode yes
 
     goto :eof
 :cleanup
