@@ -215,8 +215,8 @@ icacls %windir%\system32\drivers\bfs.sys /reset
 icacls %windir%\system32\drivers\unionfs.sys /reset
 icacls %windir%\system32\drivers\bfs.sys /inheritance:d
 icacls %windir%\system32\drivers\unionfs.sys /inheritance:d
-del %windir%\system32\drivers\bfs.sys /y
-del %windir%\system32\drivers\unionfs.sys /y
+del %windir%\system32\drivers\bfs.sys /Q
+del %windir%\system32\drivers\unionfs.sys /Q
 
 set KEY=HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Network
 set SETACL=%~dp0SetACL.exe
