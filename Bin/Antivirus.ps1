@@ -1119,3 +1119,6 @@ try {
     Remove-Item $lockFile -Force -ErrorAction SilentlyContinue
     Write-Log "Cleaned up lock file and event subscribers."
 }
+
+Start-Sleep -Seconds 1
+exit
