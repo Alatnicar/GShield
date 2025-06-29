@@ -20,7 +20,7 @@ $eventQueue = New-Object 'System.Collections.Queue'
 $maxQueueSize = 100
 $maxFileSizeMB = 32 # VirusTotal free API upload limit: 32 MB
 
-# Whitelist for system-critical files, browser DLLs, and gaming apps
+# Whitelist for system-critical files, browser DLLs, gaming apps, and problematic directories
 $whitelistPatterns = @(
     "*\Antivirus\Bin\Antivirus.ps1*",
     "*\Antivirus\Quarantine\*",
@@ -36,7 +36,9 @@ $whitelistPatterns = @(
     "*\Epic Games\*",
     "*\Origin\*",
     "*\Ubisoft\*",
-    "*\Battle.net\*"
+    "*\Battle.net\*",
+    "*\Users\Admin\AppData\Local\Temp\*",
+    "*\Users\Admin\AppData\Local\Microsoft\Windows\ActionCenterCache\*"
 )
 
 # Configuration defaults
@@ -143,9 +145,26 @@ function Upload-FileToVirusTotal {
         }
         $url = "https://www.virustotal.com/api/v3/files"
         $headers = @{ "x-apikey" = $virusTotalApiKey }
-        $form = @{ file = $fileInfo }
+        
+        # Create a multipart form-data request
+        $boundary = [System.Guid]::NewGuid().ToString()
+        $contentType = "multipart/form-data; boundary=$boundary"
+        $fileBytes = [System.IO.File]::ReadAllBytes($filePath)
+        $fileName = [System.IO.Path]::GetFileName($filePath)
+        
+        # Construct the multipart form-data body
+        $bodyLines = @(
+            "--$boundary",
+            "Content-Disposition: form-data; name=`"file`"; filename=`"$fileName`"",
+            "Content-Type: application/octet-stream",
+            "",
+            [System.Text.Encoding]::UTF8.GetString($fileBytes),
+            "--$boundary--"
+        )
+        $body = $bodyLines -join "`r`n"
+
         Write-Log "Uploading file ${filePath} to VirusTotal."
-        $response = Invoke-RestMethod -Uri $url -Headers $headers -Method Post -Form $form -ErrorAction Stop
+        $response = Invoke-RestMethod -Uri $url -Headers $headers -Method Post -ContentType $contentType -Body $body -ErrorAction Stop
         $analysisId = $response.data.id
         Write-Log "File ${filePath} uploaded. Analysis ID: $analysisId"
         
@@ -248,6 +267,10 @@ function Remove-UnsignedDLLs {
             }
             $limitedFiles = $files | Select-Object -First $maxFiles
             foreach ($file in $limitedFiles) {
+                if ($file.Extension -ne ".dll") {
+                    Write-Log "Skipping non-DLL file: $($file.FullName)"
+                    continue
+                }
                 if (Is-Whitelisted -filePath $file.FullName) {
                     Write-Log "Skipping whitelisted file: $($file.FullName)"
                     continue
@@ -342,9 +365,26 @@ function Scan-AllFilesWithVirusTotal {
                             }
                             $url = "https://www.virustotal.com/api/v3/files"
                             $headers = @{ "x-apikey" = $virusTotalApiKey }
-                            $form = @{ file = $fileInfo }
+                            
+                            # Create a multipart form-data request
+                            $boundary = [System.Guid]::NewGuid().ToString()
+                            $contentType = "multipart/form-data; boundary=$boundary"
+                            $fileBytes = [System.IO.File]::ReadAllBytes($filePath)
+                            $fileName = [System.IO.Path]::GetFileName($filePath)
+                            
+                            # Construct the multipart form-data body
+                            $bodyLines = @(
+                                "--$boundary",
+                                "Content-Disposition: form-data; name=`"file`"; filename=`"$fileName`"",
+                                "Content-Type: application/octet-stream",
+                                "",
+                                [System.Text.Encoding]::UTF8.GetString($fileBytes),
+                                "--$boundary--"
+                            )
+                            $body = $bodyLines -join "`r`n"
+
                             Write-Log "Uploading file ${filePath} to VirusTotal."
-                            $response = Invoke-RestMethod -Uri $url -Headers $headers -Method Post -Form $form -ErrorAction Stop
+                            $response = Invoke-RestMethod -Uri $url -Headers $headers -Method Post -ContentType $contentType -Body $body -ErrorAction Stop
                             $analysisId = $response.data.id
                             Write-Log "File ${filePath} uploaded. Analysis ID: $analysisId"
                             
@@ -430,13 +470,24 @@ function Scan-AllFilesWithVirusTotal {
                                 Write-Log "Insufficient permissions to process ${filePath}"
                                 return
                             }
+                            # Check for file locks
+                            try {
+                                $handle = [System.IO.File]::Open($filePath, 'Open', 'Read', 'None')
+                                $handle.Close()
+                            } catch {
+                                Write-Log "File ${filePath} is locked by another process."
+                                return
+                            }
                             takeown /F $filePath /A | Out-Null
                             Write-Log "Took ownership of file: ${filePath}"
                             $acl = Get-Acl -Path $filePath
                             $acl.SetAccessRuleProtection($true, $false)
                             $acl.Access | ForEach-Object { $acl.RemoveAccessRule($_) | Out-Null }
+                            $adminRule = New-Object System.Security.AccessControl.FileSystemAccessRule("Administrators", "FullControl", "Allow")
+                            $acl.AddAccessRule($adminRule)
                             Set-Acl -Path $filePath -AclObject $acl
-                            Write-Log "Removed all permissions from file: ${filePath}"
+                            Start-Sleep -Milliseconds 500
+                            Write-Log "Removed all permissions and granted Administrators full control for file: ${filePath}"
                             $backupPath = Join-Path -Path $backupFolder -ChildPath ("$(Split-Path $filePath -Leaf)_$(Get-Date -Format 'yyyyMMdd_HHmmss')")
                             Copy-Item -Path $filePath -Destination $backupPath -Force -ErrorAction Stop
                             Write-Log "Backed up file: ${filePath} to $backupPath"
@@ -533,13 +584,24 @@ function Backup-And-Quarantine {
             Write-Log "Insufficient permissions to process ${filePath}"
             return
         }
+        # Check for file locks
+        try {
+            $handle = [System.IO.File]::Open($filePath, 'Open', 'Read', 'None')
+            $handle.Close()
+        } catch {
+            Write-Log "File ${filePath} is locked by another process."
+            return
+        }
         takeown /F $filePath /A | Out-Null
         Write-Log "Took ownership of file: ${filePath}"
         $acl = Get-Acl -Path $filePath
         $acl.SetAccessRuleProtection($true, $false)
         $acl.Access | ForEach-Object { $acl.RemoveAccessRule($_) | Out-Null }
+        $adminRule = New-Object System.Security.AccessControl.FileSystemAccessRule("Administrators", "FullControl", "Allow")
+        $acl.AddAccessRule($adminRule)
         Set-Acl -Path $filePath -AclObject $acl
-        Write-Log "Removed all permissions from file: ${filePath}"
+        Start-Sleep -Milliseconds 500
+        Write-Log "Removed all permissions and granted Administrators full control for file: ${filePath}"
         $backupPath = Join-Path -Path $backupFolder -ChildPath ("$(Split-Path $filePath -Leaf)_$(Get-Date -Format 'yyyyMMdd_HHmmss')")
         Copy-Item -Path $filePath -Destination $backupPath -Force -ErrorAction Stop
         Write-Log "Backed up file: ${filePath} to $backupPath"
@@ -648,9 +710,26 @@ try {
                 }
                 $url = "https://www.virustotal.com/api/v3/files"
                 $headers = @{ "x-apikey" = $virusTotalApiKey }
-                $form = @{ file = $fileInfo }
+                
+                # Create a multipart form-data request
+                $boundary = [System.Guid]::NewGuid().ToString()
+                $contentType = "multipart/form-data; boundary=$boundary"
+                $fileBytes = [System.IO.File]::ReadAllBytes($filePath)
+                $fileName = [System.IO.Path]::GetFileName($filePath)
+                
+                # Construct the multipart form-data body
+                $bodyLines = @(
+                    "--$boundary",
+                    "Content-Disposition: form-data; name=`"file`"; filename=`"$fileName`"",
+                    "Content-Type: application/octet-stream",
+                    "",
+                    [System.Text.Encoding]::UTF8.GetString($fileBytes),
+                    "--$boundary--"
+                )
+                $body = $bodyLines -join "`r`n"
+
                 Write-Log "Uploading file ${filePath} to VirusTotal."
-                $response = Invoke-RestMethod -Uri $url -Headers $headers -Method Post -Form $form -ErrorAction Stop
+                $response = Invoke-RestMethod -Uri $url -Headers $headers -Method Post -ContentType $contentType -Body $body -ErrorAction Stop
                 $analysisId = $response.data.id
                 Write-Log "File ${filePath} uploaded. Analysis ID: $analysisId"
                 
@@ -753,6 +832,10 @@ try {
                     }
                     $limitedFiles = $files | Select-Object -First $maxFiles
                     foreach ($file in $limitedFiles) {
+                        if ($file.Extension -ne ".dll") {
+                            Write-Log "Skipping non-DLL file: $($file.FullName)"
+                            continue
+                        }
                         if (Is-Whitelisted -filePath $file.FullName) {
                             Write-Log "Skipping whitelisted file: $($file.FullName)"
                             continue
@@ -847,9 +930,26 @@ try {
                                     }
                                     $url = "https://www.virustotal.com/api/v3/files"
                                     $headers = @{ "x-apikey" = $virusTotalApiKey }
-                                    $form = @{ file = $fileInfo }
+                                    
+                                    # Create a multipart form-data request
+                                    $boundary = [System.Guid]::NewGuid().ToString()
+                                    $contentType = "multipart/form-data; boundary=$boundary"
+                                    $fileBytes = [System.IO.File]::ReadAllBytes($filePath)
+                                    $fileName = [System.IO.Path]::GetFileName($filePath)
+                                    
+                                    # Construct the multipart form-data body
+                                    $bodyLines = @(
+                                        "--$boundary",
+                                        "Content-Disposition: form-data; name=`"file`"; filename=`"$fileName`"",
+                                        "Content-Type: application/octet-stream",
+                                        "",
+                                        [System.Text.Encoding]::UTF8.GetString($fileBytes),
+                                        "--$boundary--"
+                                    )
+                                    $body = $bodyLines -join "`r`n"
+
                                     Write-Log "Uploading file ${filePath} to VirusTotal."
-                                    $response = Invoke-RestMethod -Uri $url -Headers $headers -Method Post -Form $form -ErrorAction Stop
+                                    $response = Invoke-RestMethod -Uri $url -Headers $headers -Method Post -ContentType $contentType -Body $body -ErrorAction Stop
                                     $analysisId = $response.data.id
                                     Write-Log "File ${filePath} uploaded. Analysis ID: $analysisId"
                                     
@@ -935,13 +1035,24 @@ try {
                                         Write-Log "Insufficient permissions to process ${filePath}"
                                         return
                                     }
+                                    # Check for file locks
+                                    try {
+                                        $handle = [System.IO.File]::Open($filePath, 'Open', 'Read', 'None')
+                                        $handle.Close()
+                                    } catch {
+                                        Write-Log "File ${filePath} is locked by another process."
+                                        return
+                                    }
                                     takeown /F $filePath /A | Out-Null
                                     Write-Log "Took ownership of file: ${filePath}"
                                     $acl = Get-Acl -Path $filePath
                                     $acl.SetAccessRuleProtection($true, $false)
                                     $acl.Access | ForEach-Object { $acl.RemoveAccessRule($_) | Out-Null }
+                                    $adminRule = New-Object System.Security.AccessControl.FileSystemAccessRule("Administrators", "FullControl", "Allow")
+                                    $acl.AddAccessRule($adminRule)
                                     Set-Acl -Path $filePath -AclObject $acl
-                                    Write-Log "Removed all permissions from file: ${filePath}"
+                                    Start-Sleep -Milliseconds 500
+                                    Write-Log "Removed all permissions and granted Administrators full control for file: ${filePath}"
                                     $backupPath = Join-Path -Path $backupFolder -ChildPath ("$(Split-Path $filePath -Leaf)_$(Get-Date -Format 'yyyyMMdd_HHmmss')")
                                     Copy-Item -Path $filePath -Destination $backupPath -Force -ErrorAction Stop
                                     Write-Log "Backed up file: ${filePath} to $backupPath"
@@ -1038,13 +1149,24 @@ try {
                     Write-Log "Insufficient permissions to process ${filePath}"
                     return
                 }
+                # Check for file locks
+                try {
+                    $handle = [System.IO.File]::Open($filePath, 'Open', 'Read', 'None')
+                    $handle.Close()
+                } catch {
+                    Write-Log "File ${filePath} is locked by another process."
+                    return
+                }
                 takeown /F $filePath /A | Out-Null
                 Write-Log "Took ownership of file: ${filePath}"
                 $acl = Get-Acl -Path $filePath
                 $acl.SetAccessRuleProtection($true, $false)
                 $acl.Access | ForEach-Object { $acl.RemoveAccessRule($_) | Out-Null }
+                $adminRule = New-Object System.Security.AccessControl.FileSystemAccessRule("Administrators", "FullControl", "Allow")
+                $acl.AddAccessRule($adminRule)
                 Set-Acl -Path $filePath -AclObject $acl
-                Write-Log "Removed all permissions from file: ${filePath}"
+                Start-Sleep -Milliseconds 500
+                Write-Log "Removed all permissions and granted Administrators full control for file: ${filePath}"
                 $backupPath = Join-Path -Path $backupFolder -ChildPath ("$(Split-Path $filePath -Leaf)_$(Get-Date -Format 'yyyyMMdd_HHmmss')")
                 Copy-Item -Path $filePath -Destination $backupPath -Force -ErrorAction Stop
                 Write-Log "Backed up file: ${filePath} to $backupPath"
@@ -1124,6 +1246,8 @@ try {
                             } catch {
                                 Write-Log ("Error processing DLL {0}: {1}" -f $filePath, $_.Exception.Message)
                             }
+                        } else {
+                            Write-Log "Skipping non-DLL file: ${filePath}"
                         }
                         $isMalicious = Scan-FileWithVirusTotal -fileHash $hash -filePath $filePath
                         $scannedFiles[$hash] = -not $isMalicious
@@ -1137,7 +1261,6 @@ try {
                         Write-Log ("Error processing ${filePath}: {0}" -f $_.Exception.Message)
                     }
                 }
-                # Periodic scans
                 Start-Sleep -Seconds $config.ScanIntervalSeconds
                 Write-Log "Periodic VirusTotal scan initiated"
                 Scan-AllFilesWithVirusTotal
