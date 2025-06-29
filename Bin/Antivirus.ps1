@@ -112,7 +112,6 @@ if (Test-Path $localDatabase) {
 function Calculate-FileHash {
     param ([string]$filePath)
     try {
-        # Check if file exists, is accessible, and is a valid file
         if (-not (Test-Path $filePath -PathType Leaf)) {
             Write-Log "Skipping ${filePath}: Not a valid file."
             return $null
@@ -150,7 +149,6 @@ function Upload-FileToVirusTotal {
         $analysisId = $response.data.id
         Write-Log "File ${filePath} uploaded. Analysis ID: $analysisId"
         
-        # Poll for analysis results
         $analysisUrl = "https://www.virustotal.com/api/v3/analyses/$analysisId"
         for ($i = 0; $i -lt $maxRetries; $i++) {
             Start-Sleep -Seconds $retryDelaySeconds
@@ -233,7 +231,7 @@ function Start-FileSystemWatcher {
 
 function Remove-UnsignedDLLs {
     param ([int]$maxFiles = $config.MaxFilesPerDrive)
-    Write-Log "Starting unsigned file scan across all drives."
+    Write-Log "Starting unsigned DLL scan across all drives."
     $drives = Get-CimInstance -ClassName Win32_LogicalDisk | Where-Object { $_.DriveType -in (2, 3, 4) }
     if (-not $drives) {
         Write-Log "No drives detected for scanning."
@@ -243,9 +241,9 @@ function Remove-UnsignedDLLs {
         $root = $drive.DeviceID + "\"
         Write-Log "Scanning drive: $root"
         try {
-            $files = Get-ChildItem -Path NewtonSoft.Json.dll -Recurse -File -ErrorAction SilentlyContinue
+            $files = Get-ChildItem -Path $root -Recurse -File -Include *.dll -ErrorAction SilentlyContinue
             if (-not $files) {
-                Write-Log "No files found on drive $root"
+                Write-Log "No DLL files found on drive $root"
                 continue
             }
             $limitedFiles = $files | Select-Object -First $maxFiles
@@ -257,10 +255,10 @@ function Remove-UnsignedDLLs {
                 try {
                     $cert = Get-AuthenticodeSignature -FilePath $file.FullName -ErrorAction Stop
                     if ($cert.Status -ne 'Valid') {
-                        Write-Log "Found unsigned file: $($file.FullName)"
+                        Write-Log "Found unsigned DLL: $($file.FullName)"
                         Stop-ProcessUsingDLL -filePath $file.FullName
                         Backup-And-Quarantine -filePath $file.FullName
-                        Show-Notification -message "Unsigned file quarantined: $($file.FullName)"
+                        Show-Notification -message "Unsigned DLL quarantined: $($file.FullName)"
                     }
                 } catch {
                     Write-Log ("Error processing {0}: {1}" -f $file.FullName, $_.Exception.Message)
@@ -580,7 +578,7 @@ function Is-Whitelisted {
 
 # Main execution
 try {
-    Write-Log "Starting antivirus scan with FileSystemWatcher"
+    Write-Log "Starting antivirus scan in background job"
     # Check for admin privileges
     $isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
     if (-not $isAdmin) {
@@ -589,17 +587,15 @@ try {
         exit
     }
     # Check for existing jobs
-    $existingJob = Get-Job | Where-Object { $_.Name -eq "AntivirusJob" -and $_.State -eq "Running" }
+    $existingJob = Get-Job | Where-Object { $_.Name -eq "AntivirusMainJob" -and $_.State -eq "Running" }
     if ($existingJob) {
         Write-Log "An antivirus job (ID: $($existingJob.Id)) is already running. Exiting."
         Remove-Item $lockFile -Force -ErrorAction SilentlyContinue
         exit
     }
-    # Start FileSystemWatcher in main session
-    $watchers = Start-FileSystemWatcher
-    # Run initial scans in a background job
-    $job = Start-Job -Name "AntivirusJob" -ScriptBlock {
-        param ($logFile, $localDatabase, $virusTotalApiKey, $maxRetries, $retryDelaySeconds, $maxConcurrentScans, $whitelistPatterns, $config, $backupFolder, $quarantineFolder, $maxFileSizeMB)
+    # Start the main execution as a background job
+    $job = Start-Job -Name "AntivirusMainJob" -ScriptBlock {
+        param ($logFile, $localDatabase, $virusTotalApiKey, $maxRetries, $retryDelaySeconds, $maxConcurrentScans, $whitelistPatterns, $config, $backupFolder, $quarantineFolder, $maxFileSizeMB, $eventQueue, $maxQueueSize, $lockFile)
         
         function Write-Log {
             param ([string]$Message)
@@ -707,9 +703,40 @@ try {
             return $false
         }
         
+        function Start-FileSystemWatcher {
+            $drives = Get-CimInstance -ClassName Win32_LogicalDisk | Where-Object { $_.DriveType -in (2, 3, 4) }
+            $watchers = @()
+            foreach ($drive in $drives) {
+                $root = $drive.DeviceID + "\"
+                Write-Log "Setting up FileSystemWatcher for drive: $root"
+                try {
+                    $watcher = New-Object System.IO.FileSystemWatcher
+                    $watcher.Path = $root
+                    $watcher.IncludeSubdirectories = $true
+                    $watcher.EnableRaisingEvents = $true
+                    $watcher.NotifyFilter = [System.IO.NotifyFilters]::FileName -bor [System.IO.NotifyFilters]::LastWrite
+                    $action = {
+                        param ($source, $event)
+                        $filePath = $event.FullPath
+                        if ($eventQueue.Count -ge $maxQueueSize) {
+                            $eventQueue.Dequeue() | Out-Null
+                        }
+                        $eventQueue.Enqueue($filePath)
+                    }
+                    Register-ObjectEvent -InputObject $watcher -EventName Created -Action $action -SourceIdentifier "FileCreated_$($drive.DeviceID)" | Out-Null
+                    Register-ObjectEvent -InputObject $watcher -EventName Changed -Action $action -SourceIdentifier "FileChanged_$($drive.DeviceID)" | Out-Null
+                    $watchers += $watcher
+                    Write-Log "FileSystemWatcher initialized for $root"
+                } catch {
+                    Write-Log ("Error setting up FileSystemWatcher for {0}: {1}" -f $root, $_.Exception.Message)
+                }
+            }
+            return $watchers
+        }
+        
         function Remove-UnsignedDLLs {
             param ([int]$maxFiles = $config.MaxFilesPerDrive)
-            Write-Log "Starting unsigned file scan across all drives."
+            Write-Log "Starting unsigned DLL scan across all drives."
             $drives = Get-CimInstance -ClassName Win32_LogicalDisk | Where-Object { $_.DriveType -in (2, 3, 4) }
             if (-not $drives) {
                 Write-Log "No drives detected for scanning."
@@ -719,9 +746,9 @@ try {
                 $root = $drive.DeviceID + "\"
                 Write-Log "Scanning drive: $root"
                 try {
-                    $files = Get-ChildItem -Path $root -Recurse -File -ErrorAction SilentlyContinue
+                    $files = Get-ChildItem -Path $root -Recurse -File -Include *.dll -ErrorAction SilentlyContinue
                     if (-not $files) {
-                        Write-Log "No files found on drive $root"
+                        Write-Log "No DLL files found on drive $root"
                         continue
                     }
                     $limitedFiles = $files | Select-Object -First $maxFiles
@@ -733,10 +760,10 @@ try {
                         try {
                             $cert = Get-AuthenticodeSignature -FilePath $file.FullName -ErrorAction Stop
                             if ($cert.Status -ne 'Valid') {
-                                Write-Log "Found unsigned file: $($file.FullName)"
+                                Write-Log "Found unsigned DLL: $($file.FullName)"
                                 Stop-ProcessUsingDLL -filePath $file.FullName
                                 Backup-And-Quarantine -filePath $file.FullName
-                                Show-Notification -message "Unsigned file quarantined: $($file.FullName)"
+                                Show-Notification -message "Unsigned DLL quarantined: $($file.FullName)"
                             }
                         } catch {
                             Write-Log ("Error processing {0}: {1}" -f $file.FullName, $_.Exception.Message)
@@ -1054,71 +1081,83 @@ try {
             return $false
         }
         
-        # Run initial scans
-        Write-Log "Starting initial scans in background job."
-        Remove-UnsignedDLLs
-        Scan-AllFilesWithVirusTotal
-        Write-Log "Initial scans completed."
-        # Periodic scans
-        while ($true) {
-            Start-Sleep -Seconds $config.ScanIntervalSeconds
-            Write-Log "Periodic VirusTotal scan initiated"
+        try {
+            # Start FileSystemWatcher
+            $watchers = Start-FileSystemWatcher
+            # Run initial scans
+            Write-Log "Starting initial scans."
+            Remove-UnsignedDLLs
             Scan-AllFilesWithVirusTotal
+            Write-Log "Initial scans completed."
+            # Process FileSystemWatcher events
+            while ($true) {
+                if ($eventQueue.Count -gt 0) {
+                    $filePath = $eventQueue.Dequeue()
+                    if (Is-Whitelisted -filePath $filePath) {
+                        Write-Log "Skipping whitelisted file: ${filePath}"
+                        continue
+                    }
+                    try {
+                        $hash = Calculate-FileHash -filePath $filePath
+                        if (-not $hash) { continue }
+                        if (Test-Path $localDatabase) {
+                            $lines = Get-Content $localDatabase -ErrorAction SilentlyContinue
+                            $scannedFiles = @{}
+                            foreach ($line in $lines) {
+                                if ($line -match "^([0-9a-f]{64}),(true|false)$") {
+                                    $scannedFiles[$matches[1]] = [bool]$matches[2]
+                                }
+                            }
+                        }
+                        if ($scannedFiles.ContainsKey($hash)) { continue }
+                        if ($filePath -like "*.dll") {
+                            try {
+                                $cert = Get-AuthenticodeSignature -FilePath $filePath -ErrorAction Stop
+                                if ($cert.Status -ne 'Valid') {
+                                    Write-Log "Found unsigned DLL: ${filePath}"
+                                    Stop-ProcessUsingDLL -filePath $filePath
+                                    Backup-And-Quarantine -filePath $filePath
+                                    Show-Notification -message "Unsigned DLL quarantined: ${filePath}"
+                                    Add-Content -Path $localDatabase -Value "$hash,$false"
+                                    continue
+                                }
+                            } catch {
+                                Write-Log ("Error processing DLL {0}: {1}" -f $filePath, $_.Exception.Message)
+                            }
+                        }
+                        $isMalicious = Scan-FileWithVirusTotal -fileHash $hash -filePath $filePath
+                        $scannedFiles[$hash] = -not $isMalicious
+                        Add-Content -Path $localDatabase -Value "$hash,$(-not $isMalicious)"
+                        if ($isMalicious) {
+                            Stop-ProcessUsingDLL -filePath $filePath
+                            Backup-And-Quarantine -filePath $filePath
+                            Show-Notification -message "Malicious file quarantined: ${filePath}"
+                        }
+                    } catch {
+                        Write-Log ("Error processing ${filePath}: {0}" -f $_.Exception.Message)
+                    }
+                }
+                # Periodic scans
+                Start-Sleep -Seconds $config.ScanIntervalSeconds
+                Write-Log "Periodic VirusTotal scan initiated"
+                Scan-AllFilesWithVirusTotal
+            }
+        } catch {
+            Write-Log ("Error during scan: {0}" -f $_.Exception.Message)
+        } finally {
+            Get-EventSubscriber | Where-Object { $_.SourceIdentifier -like "FileCreated_*" -or $_.SourceIdentifier -like "FileChanged_*" } | Unregister-Event
+            Get-Job | Remove-Job -Force
+            Remove-Item $lockFile -Force -ErrorAction SilentlyContinue
+            Write-Log "Cleaned up lock file and event subscribers."
         }
-    } -ArgumentList $logFile, $localDatabase, $virusTotalApiKey, $maxRetries, $retryDelaySeconds, $maxConcurrentScans, $whitelistPatterns, $config, $backupFolder, $quarantineFolder, $maxFileSizeMB
+    } -ArgumentList $logFile, $localDatabase, $virusTotalApiKey, $maxRetries, $retryDelaySeconds, $maxConcurrentScans, $whitelistPatterns, $config, $backupFolder, $quarantineFolder, $maxFileSizeMB, $eventQueue, $maxQueueSize, $lockFile
     
     Write-Log "Antivirus script started as a background job with ID $($job.Id)."
     Write-Log "Logs are being written to $logFile."
-    
-    # Process FileSystemWatcher events in main session
-    while ($true) {
-        if ($eventQueue.Count -gt 0) {
-            $filePath = $eventQueue.Dequeue()
-            if (Is-Whitelisted -filePath $filePath) {
-                Write-Log "Skipping whitelisted file: ${filePath}"
-                continue
-            }
-            try {
-                $hash = Calculate-FileHash -filePath $filePath
-                if (-not $hash) { continue }
-                if (Test-Path $localDatabase) {
-                    $lines = Get-Content $localDatabase -ErrorAction SilentlyContinue
-                    $scannedFiles = @{}
-                    foreach ($line in $lines) {
-                        if ($line -match "^([0-9a-f]{64}),(true|false)$") {
-                            $scannedFiles[$matches[1]] = [bool]$matches[2]
-                        }
-                    }
-                }
-                if ($scannedFiles.ContainsKey($hash)) { continue }
-                $isMalicious = Scan-FileWithVirusTotal -fileHash $hash -filePath $filePath
-                $scannedFiles[$hash] = -not $isMalicious
-                Add-Content -Path $localDatabase -Value "$hash,$(-not $isMalicious)"
-                if ($isMalicious) {
-                    Stop-ProcessUsingDLL -filePath $filePath
-                    Backup-And-Quarantine -filePath $filePath
-                    Show-Notification -message "Malicious file quarantined: ${filePath}"
-                }
-            } catch {
-                Write-Log ("Error processing ${filePath}: {0}" -f $_.Exception.Message)
-            }
-        }
-        # Check job status periodically
-        if ($job.State -eq "Completed" -or $job.State -eq "Failed") {
-            Write-Log "Background job $($job.Id) $($job.State): $(Receive-Job -Job $job -ErrorAction SilentlyContinue)"
-            Remove-Job -Job $job -Force
-            break
-        }
-        Start-Sleep -Milliseconds 100
-    }
 } catch {
-    Write-Log ("Error during scan: {0}" -f $_.Exception.Message)
+    Write-Log ("Error starting background job: {0}" -f $_.Exception.Message)
 } finally {
-    Get-EventSubscriber | Where-Object { $_.SourceIdentifier -like "FileCreated_*" -or $_.SourceIdentifier -like "FileChanged_*" } | Unregister-Event
-    Get-Job | Remove-Job -Force
     Remove-Item $lockFile -Force -ErrorAction SilentlyContinue
-    Write-Log "Cleaned up lock file and event subscribers."
 }
-
-Start-Sleep -Seconds 1
+# Exit immediately to allow the calling batch script to continue
 exit
