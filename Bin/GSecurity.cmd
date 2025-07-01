@@ -200,12 +200,6 @@ LGPO.exe /s GSecurity.inf
 :: Install elam driver
 pnputil /add-driver *.inf /subdirs /install
 
-:: Install Antivirus
-md %windir%\Setup\Scripts
-md %windir%\Setup\Scripts\Bin
-copy /y Antivirus.exe %windir%\Setup\Scripts\Bin\Antivirus.exe
-schtasks /create /tn Antivirus /tr "\"%windir%\Setup\Scripts\Bin\Antivirus.exe\"" /sc ONLOGON /rl HIGHEST /f
-
 :: Mini filter drivers
 fltmc unload bfs
 fltmc unload unionfs
