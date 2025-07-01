@@ -1,5 +1,4 @@
-﻿#Requires -RunAsAdministrator
-# GShield.ps1 by Gorstak
+﻿# GShield.ps1 by Gorstak
 
 function Register-SystemLogonScript {
     param (
