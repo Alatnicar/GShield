@@ -176,11 +176,26 @@ function Start-XSSWatcher {
     }
 }
 
-# Start background jobs
-Start-Job -ScriptBlock ${function:Start-ProcessKiller}
-Start-Job -ScriptBlock ${function:Start-XSSWatcher}
+function Kill-Listeners {
+    $knownServices = @("svchost", "System", "lsass", "wininit") # Safe system processes
+    $connections = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue
 
-Write-Log "GSecurity by Gorstak started in background." "Information"
+    foreach ($conn in $connections) {
+        try {
+            $proc = Get-Process -Id $conn.OwningProcess -ErrorAction Stop
+            if ($proc.ProcessName -notin $knownServices) {
+                Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+            }
+        } catch {
+            # Ignore processes that no longer exist or access-denied
+        }
+    }
+}
 
-# Prevent script from exiting
-while ($true) { Start-Sleep -Seconds 60 }
+Start-Job -ScriptBlock {
+    while ($true) {
+        Kill-Listeners
+        Start-ProcessKiller
+	Start-XSSWatcher
+    }
+}
