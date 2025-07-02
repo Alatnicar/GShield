@@ -129,6 +129,11 @@ function Terminate-Rootkits {
     }
 }
 
+# Add to Start-RootkitHunter() before the main loop
+Set-ProcessMitigation -System -Enable DisableExtensionPoints
+Set-NetFirewallProfile -All -DefaultInboundAction Block -DefaultOutboundAction Allow
+New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Lsa" -Name "RunAsPPL" -Value 1 -Force
+
 # Register the scheduled task
 Register-SystemLogonScript
 
