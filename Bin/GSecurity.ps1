@@ -35,7 +35,7 @@ function Register-SystemLogonScript {
 
     # Define the scheduled task action and trigger
     $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-ExecutionPolicy Bypass -File `"$targetPath`""
-    $trigger = New-ScheduledTaskTrigger -AtLogOn
+    $trigger = New-ScheduledTaskTrigger -AtLogon
     $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
 
     # Register the task
@@ -99,6 +99,37 @@ function Add-XSSFirewallRule {
 
 function Terminate-Rootkits {
     try {
+        # Check for webcam and microphone devices
+        $mediaDevices = Get-PnpDevice | Where-Object { 
+            $_.Class -eq "Camera" -or 
+            $_.Class -eq "AudioEndpoint" -or 
+            $_.FriendlyName -like "*webcam*" -or 
+            $_.FriendlyName -like "*camera*" -or 
+            $_.FriendlyName -like "*microphone*" -or 
+            $_.FriendlyName -like "*mic*"
+        }
+        $hasMediaDevices = $mediaDevices.Count -gt 0
+        if ($hasMediaDevices) {
+            Write-Log "Media device(s) detected: $($mediaDevices.FriendlyName -join ', ')"
+        }
+
+        # Define browser processes
+        $browserProcesses = @(
+            "chrome.exe", "firefox.exe", "msedge.exe", "opera.exe", "operagx.exe",
+            "vivaldi.exe", "brave.exe", "safari.exe", "tor.exe", "waterfox.exe",
+            "palemoon.exe", "seamonkey.exe", "ucbrowser.exe", "maxthon.exe", "yandex.exe"
+        )
+
+        # Define other webcam/audio-related processes
+        $webcamProcesses = @("Zoom.exe", "ms-teams.exe", "Camera.exe")
+
+        # Trusted paths for browser executables
+        $trustedPaths = @(
+            "C:\Program Files\",
+            "C:\Program Files (x86)\",
+            "$env:LocalAppData\Programs\"
+        )
+
         $connections = Get-NetTCPConnection | Where-Object {
             $_.RemoteAddress -match '^10\.|^192\.168\.|^172\.(1[6-9]|2[0-9]|3[01])\.'
         }
@@ -109,9 +140,50 @@ function Terminate-Rootkits {
                 $proc = Get-Process -Id $pid -ErrorAction Stop
                 $exePath = $proc.Path
 
+                # Skip webcam-related processes unconditionally
+                if ($webcamProcesses -contains $proc.ProcessName) {
+                    Write-Log "Skipping webcam-related process: $($proc.ProcessName) (PID: $pid)"
+                    continue
+                }
+
+                # Check if the process is a browser
+                if ($browserProcesses -contains $proc.ProcessName) {
+                    # Verify trusted path
+                    $isTrustedPath = $false
+                    if ($exePath) {
+                        foreach ($path in $trustedPaths) {
+                            if ($exePath -like "$path*") {
+                                $isTrustedPath = $true
+                                break
+                            }
+                        }
+                    }
+
+                    if ($hasMediaDevices -and $isTrustedPath) {
+                        Write-Log "Skipping browser process in trusted path with media device presence: $($proc.ProcessName) (PID: $pid) at $exePath"
+                        continue
+                    } elseif (-not $isTrustedPath -and $exePath) {
+                        Write-Log "Browser process in untrusted path: $($proc.ProcessName) (PID: $pid) at $exePath" -EntryType "Warning"
+                    }
+                }
+
                 if ($exePath) {
                     $signature = Get-AuthenticodeSignature -FilePath $exePath
                     if ($signature.Status -ne 'Valid') {
+                        if ($hasMediaDevices) {
+                            $isMediaRelated = $false
+                            try {
+                                $modules = Get-Process -Id $pid -Module -ErrorAction SilentlyContinue
+                                if ($modules.ModuleName -match "(?i)webcam|camera|microphone|audio|video|MediaCapture|WebRTC|Sound") {
+                                    $isMediaRelated = $true
+                                    Write-Log "Skipping media-related process: $($proc.ProcessName) (PID: $pid) with modules: $($modules.ModuleName -join ', ')"
+                                    continue
+                                }
+                            } catch {
+                                Write-Log ("Unable to check modules for PID " + $pid + ": " + $_.Exception.Message) -EntryType "Warning"
+                            }
+                        }
+
                         Write-Log "Terminating UNSIGNED process: $($proc.ProcessName) (PID: $pid)"
                         Stop-Process -Id $pid -Force
                     } else {
@@ -121,11 +193,11 @@ function Terminate-Rootkits {
                     Write-Log "Path unknown for process: $($proc.ProcessName) (PID: $pid)" -EntryType "Warning"
                 }
             } catch {
-                Write-Log "Error processing PID $pid`: $($_.ToString())" -EntryType "Warning"
+                Write-Log ("Error processing PID " + $pid + ": " + $_.Exception.Message) -EntryType "Warning"
             }
         }
     } catch {
-        Write-Log "Error during rootkit detection: $($_.ToString())" -EntryType "Error"
+        Write-Log ("Error during rootkit detection: " + $_.Exception.Message) -EntryType "Error"
     }
 }
 
@@ -137,6 +209,8 @@ Terminate-Rootkits
 
 # Start XSS monitoring job
 $job = Start-Job -ScriptBlock {
+    param ($WriteLogFunc, $DisableNetworkFunc, $AddXSSFirewallRuleFunc)
+
     $pattern = '(?i)(<script|javascript:|onerror=|onload=|alert\()'
 
     Register-WmiEvent -Query "SELECT * FROM __InstanceCreationEvent WITHIN 2 WHERE TargetInstance ISA 'Win32_Process'" -Action {
@@ -144,15 +218,20 @@ $job = Start-Job -ScriptBlock {
         $cmdline = $proc.CommandLine
 
         if ($cmdline -match $pattern) {
-            Write-Host "`nPotential XSS detected in: $cmdline"
-
-            if ($cmdline -match 'https?://[^\s"]+') {
-                $url = $matches[0]
-                Disable-Network-Briefly
-                Add-XSSFirewallRule -url $url
+            try {
+                # Invoke Write-Log function
+                & $WriteLogFunc -Message "Potential XSS detected in: $cmdline"
+                if ($cmdline -match 'https?://[^\s"]+') {
+                    $url = $matches[0]
+                    # Invoke Disable-Network-Briefly and Add-XSSFirewallRule
+                    & $DisableNetworkFunc
+                    & $AddXSSFirewallRuleFunc -url $url
+                }
+            } catch {
+                & $WriteLogFunc -Message ("Error in XSS monitoring: " + $_.Exception.Message) -EntryType "Error"
             }
         }
     } | Out-Null
 
     while ($true) { Start-Sleep -Seconds 5 }
-}
+} -ArgumentList ${function:Write-Log}, ${function:Disable-Network-Briefly}, ${function:Add-XSSFirewallRule}
