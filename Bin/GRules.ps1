@@ -1,4 +1,4 @@
-# GRules.ps1
+﻿# GRules.ps1
 # Windows security script focusing on security rules with enhanced ASR rule application
 # Author: Gorstak, optimized by Grok
 # Description: Downloads, parses, and applies YARA, Sigma, and Snort rules, including all applicable ASR rules
@@ -14,11 +14,14 @@ param (
     [string]$ConfigPath = "$env:USERPROFILE\GRules_config.json"
 )
 
-$ErrorActionPreference = "SilentlyContinue"
-$ProgressPreference = "SilentlyContinue"
+$ErrorActionPreference = "Stop"  # Ensure errors are visible
+$ProgressPreference = "Continue"  # Show progress in console
 $Global:ExitCode = 0
 $Global:LogDir = "$env:TEMP\security_rules\logs"
 $Global:LogFile = "$Global:LogDir\GRules_$(Get-Date -Format 'yyyyMMdd').log"
+
+# Enable TLS 1.2 for secure connections
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 # Configuration
 $Global:Config = @{
@@ -32,7 +35,15 @@ $Global:Config = @{
     ExcludedSystemFiles = @(
         "svchost.exe", "lsass.exe", "cmd.exe", "explorer.exe", "winlogon.exe",
         "csrss.exe", "services.exe", "msiexec.exe", "conhost.exe", "dllhost.exe",
-        "WmiPrvSE.exe", "MsMpEng.exe", "TrustedInstaller.exe", "spoolsv.exe", "LogonUI.exe"
+        "WmiPrvSE.exe", "MsMpEng.exe", "TrustedInstaller.exe", "spoolsv.exe", 
+        "LogonUI.exe", "iexplore.exe", "msedge.exe", "firefox.exe", "chrome.exe",
+        "regedit.exe", "powershell.exe", "pwsh.exe", "wscript.exe", "cscript.exe",
+        "SystemSettings.exe", "WerFault.exe", "wuauclt.exe", "control.exe",
+        "mstsc.exe", "netsh.exe", "tasklist.exe", "TeamViewer_Desktop.exe",
+        "TeamViewer_Service.exe", "vmnat.exe", "vmtoolsd.exe", "program.exe",
+        "reg.exe", "wmic.exe", "bitsadmin.exe", "certutil.exe", "schtasks.exe",
+        "curl.exe", "mshta.exe", "rundll32.exe", "csc.exe", "msbuild.exe",
+        "userinit.exe", "OfficeClickToRun.exe"
     )
     Telemetry = @{
         Enabled = $true
@@ -46,29 +57,40 @@ $Global:Config = @{
     FirewallBatchSize = 100
 }
 
-# ASR Rule Mappings
+# ASR Rule Mappings (Broadened for better matching)
 $AsrRuleMappings = @{
     "block_office_child_process" = @{
         RuleId = "56a863a9-875e-4185-98a7-b882c64b5ce5"
-        SigmaPatterns = @("detection.selection.Image: *\\winword.exe", "detection.selection.ParentImage: *\\excel.exe", "detection.selection.ParentImage: *\\powerpnt.exe")
+        SigmaPatterns = @(
+            "winword\.exe", "excel\.exe", "powerpnt\.exe", "outlook\.exe",
+            "CommandLine:.*\.exe"
+        )
     }
     "block_script_execution" = @{
         RuleId = "5beb7efe-fd9a-4556-801d-275e5ffc04cc"
-        SigmaPatterns = @("detection.selection.Image: *\\powershell.exe", "detection.selection.Image: *\\wscript.exe", "detection.selection.Image: *\\cscript.exe")
+        SigmaPatterns = @(
+            "powershell\.exe", "wscript\.exe", "cscript\.exe",
+            "CommandLine:.*\.ps1", "CommandLine:.*\.vbs", "CommandLine:.*\.js"
+        )
     }
     "block_executable_email" = @{
         RuleId = "e6db77e5-3df2-4cf1-b95a-636979351e5b"
-        SigmaPatterns = @("detection.selection.Image: *\\outlook.exe", "detection.selection.ParentImage: *\\outlook.exe")
+        SigmaPatterns = @(
+            "outlook\.exe", "CommandLine:.*\.exe"
+        )
     }
     "block_office_macros" = @{
         RuleId = "d4f940ab-401b-4efc-aadc-ad5f3c50688a"
-        SigmaPatterns = @("detection.selection.EventID: 400", "detection.selection.EventType: Macro")
+        SigmaPatterns = @(
+            "EventID:.*400", "macro"
+        )
     }
     "block_usb_execution" = @{
         RuleId = "b2b3f03d-6a65-4f7b-a9c7-1c7ef74a9ba4"
-        SigmaPatterns = @("detection.selection.DeviceName: *RemovableMedia*")
+        SigmaPatterns = @(
+            "RemovableMedia", "autorun\.exe"
+        )
     }
-    # Add more mappings as needed for other ASR rules
 }
 
 # Logging Function
@@ -77,32 +99,30 @@ function Write-Log {
         [string]$Message,
         [string]$EntryType = "Information"
     )
-    $maxEventLogLength = 32766
-    if (-not (Test-Path $Global:LogDir)) {
-        New-Item -ItemType Directory -Path $Global:LogDir -Force | Out-Null
-    }
-    
-    $truncatedMessage = if ($Message.Length -gt $maxEventLogLength) {
-        $Message.Substring(0, $maxEventLogLength - 100) + "... [Truncated, see log file]"
-    } else {
-        $Message
-    }
-    
     $color = switch ($EntryType) {
         "Error" { "Red" }
         "Warning" { "Yellow" }
         default { "White" }
     }
-    Write-Host "[$EntryType] $truncatedMessage" -ForegroundColor $color
+    # Always write to console
+    Write-Host "[$EntryType] $Message" -ForegroundColor $color
     
+    # Write to log file
     $logEntry = "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] [$EntryType] $Message"
-    $logEntry | Out-File -FilePath $Global:LogFile -Append -Encoding UTF8
-    
     try {
-        Write-EventLog -LogName "Application" -Source "GRules" -EventId 1000 -EntryType $EntryType -Message $truncatedMessage -ErrorAction Stop
+        if (-not (Test-Path $Global:LogDir)) {
+            New-Item -ItemType Directory -Path $Global:LogDir -Force | Out-Null
+        }
+        $logEntry | Out-File -FilePath $Global:LogFile -Append -Encoding UTF8 -ErrorAction Stop
     } catch {
-        $errorMsg = "Failed to write to Event Log: $_"
-        $errorMsg | Out-File -FilePath $Global:LogFile -Append -Encoding UTF8
+        Write-Host "[Error] Failed to write to log file $Global:LogFile: $_" -ForegroundColor Red
+    }
+    
+    # Write to Event Log
+    try {
+        Write-EventLog -LogName "Application" -Source "GRules" -EventId 1000 -EntryType $EntryType -Message $Message -ErrorAction Stop
+    } catch {
+        Write-Host "[Error] Failed to write to Event Log: $_" -ForegroundColor Red
     }
 }
 
@@ -111,6 +131,425 @@ function Initialize-EventLog {
     if (-not [System.Diagnostics.EventLog]::SourceExists("GRules")) {
         New-EventLog -LogName "Application" -Source "GRules"
         Write-Log "Created Event Log source: GRules"
+    }
+}
+
+# Verify and Enable Process Creation Auditing
+function Ensure-ProcessAuditing {
+    try {
+        # Check if running as administrator
+        $isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+        if (-not $isAdmin) {
+            Write-Log "Script not running with administrator privileges. Cannot enable process creation auditing." -EntryType "Error"
+            $Global:ExitCode = 1
+            return $false
+        }
+
+        # Check current audit status
+        Write-Log "Checking process creation auditing status..."
+        $auditStatus = auditpol /get /subcategory:"Process Creation" /r | ConvertFrom-Csv
+        if ($auditStatus.'Success Auditing' -ne "Enable" -or $auditStatus.'Failure Auditing' -ne "Enable") {
+            Write-Log "Process creation auditing is disabled (Success: $($auditStatus.'Success Auditing'), Failure: $($auditStatus.'Failure Auditing')). Enabling now..." -EntryType "Warning"
+            
+            # Execute auditpol command and capture output
+            $auditPolOutput = & auditpol /set /subcategory:"Process Creation" /success:enable /failure:enable 2>&1
+            $auditPolExitCode = $LASTEXITCODE
+            
+            if ($auditPolExitCode -ne 0) {
+                Write-Log "Failed to enable process creation auditing. auditpol exit code: $auditPolExitCode. Output: $auditPolOutput" -EntryType "Error"
+                $Global:ExitCode = 1
+                return $false
+            }
+
+            # Verify again
+            Start-Sleep -Milliseconds 500  # Brief delay to ensure policy update
+            $auditStatus = auditpol /get /subcategory:"Process Creation" /r | ConvertFrom-Csv
+            if ($auditStatus.'Success Auditing' -ne "Enable" -or $auditStatus.'Failure Auditing' -ne "Enable") {
+                Write-Log "Failed to enable process creation auditing after execution. Current status - Success: $($auditStatus.'Success Auditing'), Failure: $($auditStatus.'Failure Auditing')" -EntryType "Error"
+                $Global:ExitCode = 1
+                return $false
+            }
+            
+            Write-Log "Process creation auditing enabled successfully (Success: $($auditStatus.'Success Auditing'), Failure: $($auditStatus.'Failure Auditing'))"
+            return $true
+        } else {
+            Write-Log "Process creation auditing is already enabled (Success: $($auditStatus.'Success Auditing'), Failure: $($auditStatus.'Failure Auditing'))"
+            return $true
+        }
+    } catch {
+        Write-Log "Error checking or enabling process creation auditing: $_" -EntryType "Error"
+        $Global:ExitCode = 1
+        return $false
+    }
+}
+
+# Resolve Domain to IPs
+function Resolve-DomainToIPs {
+    param (
+        [string]$Domain
+    )
+    $ips = @()
+    if ([string]::IsNullOrWhiteSpace($Domain) -or $Domain -notmatch "^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$") {
+        Write-Log "Invalid or empty domain provided to Resolve-DomainToIPs: '$Domain'" -EntryType "Warning"
+        return $ips
+    }
+    try {
+        $dnsResults = Resolve-DnsName -Name $Domain -Type A -ErrorAction Stop
+        $ips = $dnsResults | Where-Object { $_.Type -eq "A" } | Select-Object -ExpandProperty IPAddress
+        Write-Log "Resolved domain $Domain to IPs: $($ips -join ', ')"
+    } catch {
+        Write-Log "Error resolving domain ${Domain}: $_" -EntryType "Warning"
+    }
+    return $ips
+}
+
+# Parse Rules (YARA, Sigma, Snort)
+function Parse-Rules {
+    param (
+        [hashtable]$Rules
+    )
+    $indicators = @{ Hashes = @(); Files = @(); IPs = @(); Domains = @(); AsrRules = @() }
+    
+    # YARA Rules
+    foreach ($file in $Rules.Yara) {
+        try {
+            $content = Get-Content $file -Raw
+            # Parse hashes (relaxed pattern)
+            $hashMatches = [regex]::Matches($content, 'hash\s*=\s*["'']?([0-9a-fA-F]{32,64})["'']?')
+            foreach ($match in $hashMatches) {
+                $hash = $match.Groups[1].Value
+                $indicators.Hashes += @{ Type = "Hash"; Value = $hash; Source = "YARA"; RuleFile = $file }
+                Write-Log "Parsed YARA hash: $hash from $file" -EntryType "Information"
+            }
+            # Parse filenames (stricter pattern)
+            $fileMatches = [regex]::Matches($content, 'file\s*=\s*["'']?([a-zA-Z0-9][a-zA-Z0-9_\-\.]*\.(?:exe|dll|bat|ps1|cmd|vbs|js))["'']?')
+            foreach ($match in $fileMatches) {
+                $fileName = $match.Groups[1].Value
+                if ($fileName -notin $Global:Config.ExcludedSystemFiles -and $fileName -notmatch '^(exe|dll|bat|ps1|cmd|Scr|DLL|Exe|EXE)$') {
+                    $indicators.Files += @{ Type = "File"; Value = $fileName; Source = "YARA"; RuleFile = $file }
+                    Write-Log "Parsed YARA file: $fileName from $file" -EntryType "Information"
+                } else {
+                    Write-Log "Invalid or excluded filename skipped: $fileName in $file" -EntryType "Warning"
+                }
+            }
+            # Parse IPs
+            $ipMatches = [regex]::Matches($content, '\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b')
+            foreach ($match in $ipMatches) {
+                $indicators.IPs += @{ Type = "IP"; Value = $match.Value; Source = "YARA"; RuleFile = $file }
+            }
+            # Parse domains
+            $domainMatches = [regex]::Matches($content, '\b([a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b')
+            foreach ($match in $domainMatches) {
+                $domain = $match.Value
+                if ($domain -match "^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$") {
+                    $indicators.Domains += @{ Type = "Domain"; Value = $domain; Source = "YARA"; RuleFile = $file }
+                    Write-Log "Parsed YARA domain: $domain from $file" -EntryType "Information"
+                } else {
+                    Write-Log "Invalid domain skipped: $domain in $file" -EntryType "Warning"
+                }
+            }
+        } catch {
+            Write-Log "Error parsing YARA rule ${file}: $_" -EntryType "Warning"
+        }
+    }
+    
+    # Sigma Rules
+    if (Get-Module -ListAvailable -Name PowerShell-YAML) {
+        foreach ($file in $Rules.Sigma) {
+            try {
+                $yaml = ConvertFrom-Yaml (Get-Content $file -Raw)
+                $condition = $yaml.condition
+                foreach ($ruleName in $AsrRuleMappings.Keys) {
+                    $patterns = $AsrRuleMappings[$ruleName].SigmaPatterns
+                    foreach ($pattern in $patterns) {
+                        if ($condition -match $pattern) {
+                            $indicators.AsrRules += @{ Type = "ASR"; RuleId = $AsrRuleMappings[$ruleName].RuleId; Source = "Sigma"; RuleFile = $file }
+                            Write-Log "Matched Sigma rule for ASR $ruleName in $file" -EntryType "Information"
+                            break
+                        }
+                    }
+                }
+                # Parse filenames from Sigma
+                $fileMatches = [regex]::Matches($condition, '\bImage:.*\\([a-zA-Z0-9][a-zA-Z0-9_\-\.]*\.(?:exe|dll|bat|ps1|cmd|vbs|js))\b')
+                foreach ($match in $fileMatches) {
+                    $fileName = $match.Groups[1].Value
+                    if ($fileName -notin $Global:Config.ExcludedSystemFiles -and $fileName -notmatch '^(exe|dll|bat|ps1|cmd|Scr|DLL|Exe|EXE)$') {
+                        $indicators.Files += @{ Type = "File"; Value = $fileName; Source = "Sigma"; RuleFile = $file }
+                        Write-Log "Parsed Sigma file: $fileName from $file" -EntryType "Information"
+                    } else {
+                        Write-Log "Invalid or excluded filename skipped: $fileName in $file" -EntryType "Warning"
+                    }
+                }
+            } catch {
+                Write-Log "Error parsing Sigma rule ${file}: $_" -EntryType "Warning"
+            }
+        }
+    } else {
+        Write-Log "PowerShell-YAML module not installed, skipping Sigma rule parsing" -EntryType "Warning"
+    }
+    
+    # Snort Rules
+    foreach ($file in $Rules.Snort) {
+        try {
+            $content = Get-Content $file -Raw
+            $ipMatches = [regex]::Matches($content, '\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b')
+            foreach ($match in $ipMatches) {
+                $indicators.IPs += @{ Type = "IP"; Value = $match.Value; Source = "Snort"; RuleFile = $file }
+            }
+            $domainMatches = [regex]::Matches($content, '\b([a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b')
+            foreach ($match in $domainMatches) {
+                $domain = $match.Value
+                if ($domain -match "^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$") {
+                    $indicators.Domains += @{ Type = "Domain"; Value = $domain; Source = "Snort"; RuleFile = $file }
+                    Write-Log "Parsed Snort domain: $domain from $file" -EntryType "Information"
+                } else {
+                    Write-Log "Invalid domain skipped: $domain in $file" -EntryType "Warning"
+                }
+            }
+        } catch {
+            Write-Log "Error parsing Snort rule ${file}: $_" -EntryType "Warning"
+        }
+    }
+    
+    # Merge and deduplicate indicators
+    $indicators.Hashes = $indicators.Hashes | Group-Object -Property Value | ForEach-Object { $_.Group[0] }
+    $indicators.Files = $indicators.Files | Group-Object -Property Value | ForEach-Object { $_.Group[0] }
+    $indicators.IPs = $indicators.IPs | Group-Object -Property Value | ForEach-Object { 
+        $group = $_.Group
+        $source = ($group.Source -join '')
+        $ruleFile = ($group.RuleFile -join '')
+        Write-Log "Merged indicator: Type=IP, Value=$($group[0].Value), Source=$source, RuleFile=$ruleFile"
+        @{ Type = "IP"; Value = $group[0].Value; Source = $source; RuleFile = $ruleFile }
+    }
+    $indicators.Domains = $indicators.Domains | Group-Object -Property Value | ForEach-Object { $_.Group[0] }
+    $indicators.AsrRules = $indicators.AsrRules | Group-Object -Property RuleId | ForEach-Object { $_.Group[0] }
+    
+    Write-Log "Parsed $($indicators.Hashes.Count + $indicators.Files.Count + $indicators.IPs.Count + $indicators.Domains.Count + $indicators.AsrRules.Count) unique indicators from rules (Hashes: $($indicators.Hashes.Count), Files: $($indicators.Files.Count), IPs: $($indicators.IPs.Count), Domains: $($indicators.Domains.Count), ASR: $($indicators.AsrRules.Count))."
+    return $indicators
+}
+
+# Apply Security Rules
+function Apply-SecurityRules {
+    param (
+        [hashtable]$Indicators
+    )
+    
+    # Apply ASR Rules
+    foreach ($asr in $Indicators.AsrRules) {
+        try {
+            Add-MpPreference -AttackSurfaceReductionRules_Ids $asr.RuleId -AttackSurfaceReductionRules_Actions Enabled
+            Write-Log "Applied ASR rule: $($asr.RuleId)"
+        } catch {
+            Write-Log "Error applying ASR rule $($asr.RuleId): $_" -EntryType "Warning"
+        }
+    }
+    
+    # Apply filename exclusions
+    foreach ($file in $Indicators.Files) {
+        try {
+            Add-MpPreference -ExclusionPath $file.Value
+            Write-Log "Added filename exclusion for monitoring: $($file.Value) from $($file.Source)"
+        } catch {
+            Write-Log "Error adding exclusion for $($file.Value): $_" -EntryType "Warning"
+        }
+    }
+    
+    # Remove existing firewall rules
+    Get-NetFirewallRule -DisplayName "Block C2 IPs Batch*" | Remove-NetFirewallRule
+    Write-Log "Removed $(@(Get-NetFirewallRule -DisplayName "Block C2 IPs Batch*").Count) existing firewall rules"
+    
+    # Apply IP-based firewall rules
+    $ipBatch = @()
+    $batchCount = 0
+    $batchSize = $Global:Config.FirewallBatchSize
+    foreach ($ip in $Indicators.IPs) {
+        $ipBatch += $ip.Value
+        if ($ipBatch.Count -ge $batchSize -or $ip -eq $Indicators.IPs[-1]) {
+            $batchCount++
+            $ruleName = "Block_C2_IPs_$batchCount"
+            try {
+                New-NetFirewallRule -DisplayName "Block C2 IPs Batch $batchCount" -Name $ruleName -Direction Outbound -Action Block -RemoteAddress $ipBatch -Enabled True
+                Write-Log "Created firewall rule $ruleName for $($ipBatch.Count) IPs"
+                Get-NetFirewallRule -Name $ruleName | Format-List | Out-String | ForEach-Object { Write-Log $_ }
+            } catch {
+                Write-Log "Error creating firewall rule ${ruleName}: $_" -EntryType "Warning"
+            }
+            $ipBatch = @()
+        }
+    }
+    
+    # Apply domain-based firewall rules
+    Write-Log "Applying $($Indicators.Domains.Count) domain-based firewall rules..."
+    $domainIps = @()
+    foreach ($domain in $Indicators.Domains) {
+        $ips = Resolve-DomainToIPs -Domain $domain.Value
+        if ($ips) {
+            $domainIps += $ips
+        } else {
+            Write-Log "No IPs resolved for domain $($domain.Value), skipping firewall rule" -EntryType "Warning"
+        }
+    }
+    
+    $ipBatch = @()
+    $batchCount = 0
+    foreach ($ip in $domainIps) {
+        $ipBatch += $ip
+        if ($ipBatch.Count -ge $batchSize -or $ip -eq $domainIps[-1]) {
+            $batchCount++
+            $ruleName = "Block_C2_Domain_IPs_$batchCount"
+            try {
+                New-NetFirewallRule -DisplayName "Block C2 Domain IPs Batch $batchCount" -Name $ruleName -Direction Outbound -Action Block -RemoteAddress $ipBatch -Enabled True
+                Write-Log "Created firewall rule $ruleName for $($ipBatch.Count) IPs from domains: $($Indicators.Domains.Value -join ', ')"
+            } catch {
+                Write-Log "Error creating firewall rule ${ruleName}: $_" -EntryType "Warning"
+            }
+            $ipBatch = @()
+        }
+    }
+    Write-Log "Applying firewall rules for $($domainIps.Count) resolved domain IPs in $batchCount batches..."
+    
+    Write-Log "Applied $($Indicators.AsrRules.Count) ASR rules, $($Indicators.Hashes.Count) hash-based threats, $($Indicators.Files.Count) filename exclusions, $($Indicators.IPs.Count) IP-based firewall rules, and $($Indicators.Domains.Count) domain-based firewall rules (from $($Indicators.Domains.Count) domains)"
+}
+
+# Monitor Processes
+function Monitor-Processes {
+    if ($NoMonitor) { return }
+    Write-Log "Starting process monitoring..."
+    try {
+        $events = Get-WinEvent -LogName "Security" -FilterXPath "*[System[(EventID=4688)]]" -MaxEvents $Global:Config.Telemetry.MaxEvents
+        foreach ($event in $events) {
+            $xml = [xml]$event.ToXml()
+            $processName = $xml.Event.EventData.Data | Where-Object { $_.Name -eq "NewProcessName" } | Select-Object -ExpandProperty "#text"
+            $processId = $xml.Event.EventData.Data | Where-Object { $_.Name -eq "NewProcessId" } | Select-Object -ExpandProperty "#text"
+            $parentProcessName = $xml.Event.EventData.Data | Where-Object { $_.Name -eq "ParentProcessName" } | Select-Object -ExpandProperty "#text"
+            Write-Log "Logged process: $processName (PID: $processId, Parent: $parentProcessName)"
+        }
+        if (-not $events) {
+            Write-Log "No process creation events found in Security Event Log. Ensure process creation auditing is enabled (Local Security Policy > Audit Process Creation)." -EntryType "Warning"
+            Write-Log "Run 'auditpol /set /subcategory:\"Process Creation\" /success:enable /failure:enable' to enable auditing." -EntryType "Warning"
+        }
+    } catch {
+        Write-Log "Error querying process creation events: $_" -EntryType "Warning"
+    }
+}
+
+# Download and verify YARA, Sigma, and Snort rules
+function Get-SecurityRules {
+    param ($Config)
+    
+    $tempDir = "$env:TEMP\security_rules"
+    if (-not (Test-Path $tempDir)) { New-Item -ItemType Directory -Path $tempDir -Force | Out-Null }
+    $successfulSources = @()
+    $rules = @{ Yara = @(); Sigma = @(); Snort = @() }
+
+    try {
+        Add-MpPreference -ExclusionPath $tempDir
+        Write-Log "Added Defender exclusion for $tempDir"
+
+        # YARA Forge rules
+        Write-Log "Processing YARA Forge rules..."
+        $yaraForgeDir = "$tempDir\yara_forge"
+        $yaraForgeZip = "$tempDir\yara_forge.zip"
+        if (-not (Test-Path $yaraForgeDir)) { New-Item -ItemType Directory -Path $yaraForgeDir -Force | Out-Null }
+        $yaraForgeUri = Get-YaraForgeUrl
+        $yaraRuleCount = 0
+        
+        if (-not $yaraForgeUri) {
+            Write-Log "YARA Forge URL unavailable, trying fallback..." -EntryType "Warning"
+        }
+        elseif (Test-Url -Uri $yaraForgeUri) {
+            if (Test-RuleSourceUpdated -Uri $yaraForgeUri -LocalFile $yaraForgeZip) {
+                if (Invoke-WebRequestWithRetry -Uri $yaraForgeUri -OutFile $yaraForgeZip -UseExponentialBackoff) {
+                    Start-MpScan -ScanPath $yaraForgeZip -ScanType CustomScan
+                    Expand-Archive -Path $yaraForgeZip -DestinationPath $yaraForgeDir -Force
+                    $rules.Yara += Get-ChildItem -Path $yaraForgeDir -Recurse -Include "*.yar" | Select-Object -ExpandProperty FullName
+                    $yaraRuleCount = ($rules.Yara | ForEach-Object { Get-YaraRuleCount -FilePath $_ } | Measure-Object -Sum).Sum
+                    Write-Log "Found $($rules.Yara.Count) YARA Forge files with $yaraRuleCount individual rules in $yaraForgeDir"
+                    $successfulSources += "YARA Forge"
+                }
+            } else {
+                Write-Log "YARA Forge rules are up to date"
+                $rules.Yara += Get-ChildItem -Path $yaraForgeDir -Recurse -Include "*.yar" | Select-Object -ExpandProperty FullName
+                $yaraRuleCount = ($rules.Yara | ForEach-Object { Get-YaraRuleCount -FilePath $_ } | Measure-Object -Sum).Sum
+                Write-Log "Found $($rules.Yara.Count) YARA Forge files with $yaraRuleCount individual rules in $yaraForgeDir"
+                $successfulSources += "YARA Forge"
+            }
+        }
+
+        # SigmaHQ rules
+        Write-Log "Processing SigmaHQ rules..."
+        $sigmaDir = "$tempDir\sigma"
+        $sigmaZip = "$tempDir\sigma.zip"
+        if (-not (Test-Path $sigmaDir)) { New-Item -ItemType Directory -Path $sigmaDir -Force | Out-Null }
+        if (Test-Url -Uri $Config.Sources.SigmaHQ) {
+            if (Test-RuleSourceUpdated -Uri $Config.Sources.SigmaHQ -LocalFile $sigmaZip) {
+                if (Invoke-WebRequestWithRetry -Uri $Config.Sources.SigmaHQ -OutFile $sigmaZip -UseExponentialBackoff) {
+                    Start-MpScan -ScanPath $sigmaZip -ScanType CustomScan
+                    Expand-Archive -Path $sigmaZip -DestinationPath $sigmaDir -Force
+                    $rules.Sigma += Get-ChildItem -Path "$sigmaDir\sigma-master\rules" -Recurse -Include "*.yml" | Select-Object -ExpandProperty FullName
+                    Write-Log "Downloaded and extracted SigmaHQ rules"
+                    Write-Log "Found $($rules.Sigma.Count) Sigma rules in $sigmaDir\sigma-master\rules"
+                    $successfulSources += "SigmaHQ"
+                }
+            } else {
+                Write-Log "SigmaHQ rules are up to date"
+                $rules.Sigma += Get-ChildItem -Path "$sigmaDir\sigma-master\rules" -Recurse -Include "*.yml" | Select-Object -ExpandProperty FullName
+                Write-Log "Found $($rules.Sigma.Count) Sigma rules in $sigmaDir\sigma-master\rules"
+                $successfulSources += "SigmaHQ"
+            }
+        }
+
+        # Snort Community rules
+        Write-Log "Processing Snort Community rules..."
+        $snortDir = "$tempDir\snort"
+        $snortZip = "$tempDir\snort_community.tar.gz"
+        if (-not (Test-Path $snortDir)) { New-Item -ItemType Directory -Path $snortDir -Force | Out-Null }
+        $snortUri = if ($SnortOinkcode) { "$($Config.Sources.SnortCommunity)?oinkcode=$SnortOinkcode" } else { $Config.Sources.SnortCommunity }
+        if (Test-Url -Uri $snortUri) {
+            if (Test-RuleSourceUpdated -Uri $snortUri -LocalFile $snortZip) {
+                if (Invoke-WebRequestWithRetry -Uri $snortUri -OutFile $snortZip -UseExponentialBackoff) {
+                    Start-MpScan -ScanPath $snortZip -ScanType CustomScan
+                    Expand-Archive -Path $snortZip -DestinationPath $snortDir -Force
+                    $rules.Snort += Get-ChildItem -Path $snortDir -Recurse -Include "*.rules" | Select-Object -ExpandProperty FullName
+                    Write-Log "Downloaded and extracted Snort Community rules"
+                    $successfulSources += "Snort Community"
+                }
+            } else {
+                Write-Log "Snort Community rules are up to date"
+                $rules.Snort += Get-ChildItem -Path $snortDir -Recurse -Include "*.rules" | Select-Object -ExpandProperty FullName
+                $successfulSources += "Snort Community"
+            }
+        } else {
+            Write-Log "Snort Community URL is invalid or no Oinkcode provided, trying fallback..." -EntryType "Warning"
+            # Fallback to Emerging Threats
+            Write-Log "Processing Emerging Threats rules as fallback..."
+            $etZip = "$tempDir\emerging_threats.tar.gz"
+            if (Test-Url -Uri $Config.Sources.EmergingThreats) {
+                if (Test-RuleSourceUpdated -Uri $Config.Sources.EmergingThreats -LocalFile $etZip) {
+                    if (Invoke-WebRequestWithRetry -Uri $Config.Sources.EmergingThreats -OutFile $etZip -UseExponentialBackoff) {
+                        Start-MpScan -ScanPath $etZip -ScanType CustomScan
+                        Expand-Archive -Path $etZip -DestinationPath $snortDir -Force
+                        $rules.Snort += Get-ChildItem -Path $snortDir -Recurse -Include "*.rules" | Select-Object -ExpandProperty FullName
+                        Write-Log "Downloaded and extracted Emerging Threats rules"
+                        $successfulSources += "Emerging Threats"
+                    }
+                } else {
+                    Write-Log "Emerging Threats rules are up to date"
+                    $rules.Snort += Get-ChildItem -Path $snortDir -Recurse -Include "*.rules" | Select-Object -ExpandProperty FullName
+                    $successfulSources += "Emerging Threats"
+                }
+            }
+        }
+
+        Write-Log "Successfully processed rules from: $($successfulSources -join ', ')"
+        return $rules
+    } catch {
+        Write-Log "Error in Get-SecurityRules: $_" -EntryType "Error"
+        $Global:ExitCode = 1
+        return $rules
+    } finally {
+        Remove-MpPreference -ExclusionPath $tempDir
+        Write-Log "Removed Defender exclusion for $tempDir"
     }
 }
 
@@ -258,846 +697,44 @@ function Invoke-WebRequestWithRetry {
     return $false
 }
 
-# Download and verify YARA, Sigma, and Snort rules
-function Get-SecurityRules {
-    param ($Config)
-    
-    $tempDir = "$env:TEMP\security_rules"
-    if (-not (Test-Path $tempDir)) { New-Item -ItemType Directory -Path $tempDir -Force | Out-Null }
-    $successfulSources = @()
-    $rules = @{ Yara = @(); Sigma = @(); Snort = @() }
-
-    try {
-        Add-MpPreference -ExclusionPath $tempDir
-        Write-Log "Added Defender exclusion for $tempDir"
-
-        # YARA Forge rules
-        Write-Log "Processing YARA Forge rules..."
-        $yaraForgeDir = "$tempDir\yara_forge"
-        $yaraForgeZip = "$tempDir\yara_forge.zip"
-        if (-not (Test-Path $yaraForgeDir)) { New-Item -ItemType Directory -Path $yaraForgeDir -Force | Out-Null }
-        $yaraForgeUri = Get-YaraForgeUrl
-        $yaraRuleCount = 0
-        
-        if (-not $yaraForgeUri) {
-            Write-Log "YARA Forge URL unavailable, trying fallback..." -EntryType "Warning"
-        }
-        elseif (Test-Url -Uri $yaraForgeUri) {
-            if (Test-RuleSourceUpdated -Uri $yaraForgeUri -LocalFile $yaraForgeZip) {
-                if (Invoke-WebRequestWithRetry -Uri $yaraForgeUri -OutFile $yaraForgeZip -UseExponentialBackoff) {
-                    Start-MpScan -ScanPath $yaraForgeZip -ScanType CustomScan
-                    Expand-Archive -Path $yaraForgeZip -DestinationPath $yaraForgeDir -Force
-                    Write-Log "Downloaded and extracted YARA Forge rules"
-                    $rules.Yara = Get-ChildItem -Path $yaraForgeDir -Recurse -Include "*.yar","*.yara" -ErrorAction SilentlyContinue
-                    foreach ($file in $rules.Yara) {
-                        $yaraRuleCount += Get-YaraRuleCount -FilePath $file.FullName
-                    }
-                    Write-Log "Found $($rules.Yara.Count) YARA Forge files with $yaraRuleCount individual rules in $yaraForgeDir"
-                    $successfulSources += "YARA Forge"
-                } else {
-                    Write-Log "Failed to download YARA Forge rules after retries, trying fallback..." -EntryType "Warning"
-                }
-            } else {
-                Write-Log "YARA Forge rules are up to date"
-                $rules.Yara = Get-ChildItem -Path $yaraForgeDir -Recurse -Include "*.yar","*.yara" -ErrorAction SilentlyContinue
-                foreach ($file in $rules.Yara) {
-                    $yaraRuleCount += Get-YaraRuleCount -FilePath $file.FullName
-                }
-                Write-Log "Found $($rules.Yara.Count) YARA Forge files with $yaraRuleCount individual rules in $yaraForgeDir"
-                $successfulSources += "YARA Forge"
-            }
-        } else {
-            Write-Log "YARA Forge URL is invalid, trying fallback..." -EntryType "Warning"
-        }
-
-        # Yara-Rules fallback
-        if (-not ($successfulSources -contains "YARA Forge") -or $yaraRuleCount -lt 10) {
-            Write-Log "Processing Yara-Rules as fallback due to low YARA Forge rule count ($yaraRuleCount)..."
-            $yaraRulesDir = "$tempDir\yara_rules"
-            $yaraRulesZip = "$tempDir\yara_rules.zip"
-            if (-not (Test-Path $yaraRulesDir)) { New-Item -ItemType Directory -Path $yaraRulesDir -Force | Out-Null }
-            $yaraRulesUri = $Config.Sources.YaraRules
-            
-            if (Test-Url -Uri $yaraRulesUri) {
-                if (Test-RuleSourceUpdated -Uri $yaraRulesUri -LocalFile $yaraRulesZip) {
-                    if (Invoke-WebRequestWithRetry -Uri $yaraRulesUri -OutFile $yaraRulesZip -UseExponentialBackoff) {
-                        Start-MpScan -ScanPath $yaraRulesZip -ScanType CustomScan
-                        Expand-Archive -Path $yaraRulesZip -DestinationPath $yaraRulesDir -Force
-                        Write-Log "Downloaded and extracted Yara-Rules"
-                        $yaraRulesFiles = Get-ChildItem -Path $yaraRulesDir -Recurse -Include "*.yar","*.yara" -ErrorAction SilentlyContinue
-                        $rules.Yara += $yaraRulesFiles
-                        $yaraRuleCount = 0
-                        foreach ($file in $yaraRulesFiles) {
-                            $yaraRuleCount += Get-YaraRuleCount -FilePath $file.FullName
-                        }
-                        Write-Log "Found $($yaraRulesFiles.Count) Yara-Rules files with $yaraRuleCount individual rules in $yaraRulesDir"
-                        $successfulSources += "Yara-Rules"
-                    } else {
-                        Write-Log "Failed to download Yara-Rules after retries, skipping..." -EntryType "Warning"
-                    }
-                } else {
-                    Write-Log "Yara-Rules are up to date"
-                    $yaraRulesFiles = Get-ChildItem -Path $yaraRulesDir -Recurse -Include "*.yar","*.yara" -ErrorAction SilentlyContinue
-                    $rules.Yara += $yaraRulesFiles
-                    $yaraRuleCount = 0
-                    foreach ($file in $yaraRulesFiles) {
-                        $yaraRuleCount += Get-YaraRuleCount -FilePath $file.FullName
-                    }
-                    Write-Log "Found $($yaraRulesFiles.Count) Yara-Rules files with $yaraRuleCount individual rules in $yaraRulesDir"
-                    $successfulSources += "Yara-Rules"
-                }
-            } else {
-                Write-Log "Yara-Rules URL is invalid, skipping..." -EntryType "Warning"
-            }
-        }
-
-        # SigmaHQ rules
-        Write-Log "Processing SigmaHQ rules..."
-        $sigmaDir = "$tempDir\sigma"
-        $sigmaZip = "$tempDir\sigma_rules.zip"
-        if (-not (Test-Path $sigmaDir)) { New-Item -ItemType Directory -Path $sigmaDir -Force | Out-Null }
-        $sigmaUri = $Config.Sources.SigmaHQ
-        
-        if (Test-Url -Uri $sigmaUri) {
-            if (Test-RuleSourceUpdated -Uri $sigmaUri -LocalFile $sigmaZip) {
-                if (Invoke-WebRequestWithRetry -Uri $sigmaUri -OutFile $sigmaZip -UseExponentialBackoff) {
-                    Start-MpScan -ScanPath $sigmaZip -ScanType CustomScan
-                    Expand-Archive -Path $sigmaZip -DestinationPath $sigmaDir -Force
-                    Write-Log "Downloaded and extracted SigmaHQ rules"
-                    $successfulSources += "SigmaHQ"
-                } else {
-                    Write-Log "Failed to download SigmaHQ rules after retries, skipping..." -EntryType "Warning"
-                }
-            } else {
-                Write-Log "SigmaHQ rules are up to date"
-                $successfulSources += "SigmaHQ"
-            }
-        } else {
-            Write-Log "SigmaHQ URL is invalid, skipping..." -EntryType "Warning"
-        }
-        
-        $sigmaRulesPath = "$sigmaDir\sigma-master\rules"
-        if (Test-Path $sigmaRulesPath) {
-            $rules.Sigma = Get-ChildItem -Path $sigmaRulesPath -Recurse -Include "*.yml" -Exclude "*deprecated*" -ErrorAction SilentlyContinue
-            Write-Log "Found $($rules.Sigma.Count) Sigma rules in $sigmaRulesPath"
-        } else {
-            Write-Log "Sigma rules directory $sigmaRulesPath does not exist" -EntryType "Warning"
-        }
-
-        # Snort Community rules
-        Write-Log "Processing Snort Community rules..."
-        $snortRules = "$tempDir\snort_community.rules"
-        $snortUri = if ($SnortOinkcode) {
-            "$($Config.Sources.SnortCommunity)?oinkcode=$SnortOinkcode"
-        } else {
-            Write-Log "No Snort Oinkcode provided. Snort Community rules require an Oinkcode from https://www.snort.org/users/sign_up" -EntryType "Warning"
-            $null
-        }
-        
-        if ($snortUri -and (Test-Url -Uri $snortUri)) {
-            if (Test-RuleSourceUpdated -Uri $snortUri -LocalFile $snortRules) {
-                if (Invoke-WebRequestWithRetry -Uri $snortUri -OutFile $snortRules -UseExponentialBackoff) {
-                    Start-MpScan -ScanPath $snortRules -ScanType CustomScan
-                    try {
-                        Write-Log "Checking Snort Community hash..."
-                        $snortPage = Invoke-WebRequest -Uri "https://www.snort.org/downloads" -UseBasicParsing -TimeoutSec 15
-                        if ($snortPage.Content -match 'community-rules\.tar\.gz\.md5.*([a-f0-9]{32})') {
-                            $expectedHash = $matches[1]
-                            $fileHash = (Get-FileHash -Path $snortRules -Algorithm MD5).Hash
-                            if ($fileHash -ne $expectedHash) {
-                                Write-Log "Snort Community rules hash mismatch!" -EntryType "Error"
-                                throw "Snort Community rules hash verification failed"
-                            }
-                            Write-Log "Snort Community rules hash verified"
-                        } else {
-                            Write-Log "Snort Community hash not found, proceeding without verification" -EntryType "Warning"
-                        }
-                    }
-                    catch {
-                        Write-Log "Error checking Snort Community hash: $_" -EntryType "Warning"
-                    }
-                    Write-Log "Downloaded Snort Community rules"
-                    $successfulSources += "Snort Community"
-                    $rules.Snort += $snortRules
-                } else {
-                    Write-Log "Failed to download Snort Community rules after retries, trying fallback..." -EntryType "Warning"
-                }
-            } else {
-                Write-Log "Snort Community rules are up to date"
-                $successfulSources += "Snort Community"
-                $rules.Snort += $snortRules
-            }
-        } else {
-            Write-Log "Snort Community URL is invalid or no Oinkcode provided, trying fallback..." -EntryType "Warning"
-        }
-
-        # Emerging Threats fallback
-        if (-not ($successfulSources -contains "Snort Community")) {
-            Write-Log "Processing Emerging Threats rules as fallback..."
-            $emergingRules = "$tempDir\snort_emerging.rules"
-            $emergingUri = $Config.Sources.EmergingThreats
-            $emergingTar = "$tempDir\emerging_rules.tar.gz"
-            
-            if (Test-Url -Uri $emergingUri) {
-                if (Test-RuleSourceUpdated -Uri $emergingUri -LocalFile $emergingTar) {
-                    if (Invoke-WebRequestWithRetry -Uri $emergingUri -OutFile $emergingTar -UseExponentialBackoff) {
-                        Start-MpScan -ScanPath $emergingTar -ScanType CustomScan
-                        try {
-                            $hashUri = "https://rules.emergingthreats.net/open/snort-3.0.0/emerging.rules.tar.gz.md5"
-                            $hashResponse = Invoke-WebRequest -Uri $hashUri -UseBasicParsing -TimeoutSec 15
-                            if ($hashResponse.Content -match '([a-f0-9]{32})') {
-                                $expectedHash = $matches[1]
-                                $fileHash = (Get-FileHash -Path $emergingTar -Algorithm MD5).Hash
-                                if ($fileHash -ne $expectedHash) {
-                                    Write-Log "Emerging Threats rules hash mismatch!" -EntryType "Error"
-                                    throw "Emerging Threats rules hash verification failed"
-                                }
-                                Write-Log "Emerging Threats rules hash verified"
-                            } else {
-                                Write-Log "Emerging Threats hash not found, proceeding without verification" -EntryType "Warning"
-                            }
-                        }
-                        catch {
-                            Write-Log "Error checking Emerging Threats hash: $_" -EntryType "Warning"
-                        }
-                        
-                        try {
-                            tar -xzf $emergingTar -C $tempDir
-                            if (Test-Path "$tempDir\rules") {
-                                Move-Item -Path "$tempDir\rules\*.rules" -Destination $emergingRules -Force
-                                Write-Log "Downloaded and extracted Emerging Threats rules"
-                                $successfulSources += "Emerging Threats"
-                                $rules.Snort += $emergingRules
-                            } else {
-                                Write-Log "Emerging Threats extraction failed: rules directory not found" -EntryType "Warning"
-                            }
-                        }
-                        catch {
-                            Write-Log "Error extracting Emerging Threats rules: $_" -EntryType "Warning"
-                        }
-                    } else {
-                        Write-Log "Failed to download Emerging Threats rules after retries, skipping..." -EntryType "Warning"
-                    }
-                } else {
-                    Write-Log "Emerging Threats rules are up to date"
-                    $successfulSources += "Emerging Threats"
-                    $rules.Snort += $emergingRules
-                }
-            } else {
-                Write-Log "Emerging Threats URL is invalid, skipping..." -EntryType "Warning"
-            }
-        }
-
-        if ($successfulSources.Count -eq 0) {
-            Write-Log "No rule sources were successfully processed!" -EntryType "Error"
-            throw "No valid rule sources available"
-        }
-        
-        Write-Log "Successfully processed rules from: $($successfulSources -join ', ')"
-        return $rules
-    }
-    catch {
-        Write-Log "Error in Get-SecurityRules: $_" -EntryType "Error"
-        return $rules
-    }
-}
-
-# Parse rules for actionable indicators and ASR rules
-function Parse-Rules {
-    param (
-        $Rules,
-        $Config
-    )
-
-    $indicators = @()
-    $asrRulesToApply = @()
-    $batchSize = 1000
-    $systemFiles = $Config.ExcludedSystemFiles
-    $debugSamples = @()
-    $isDebug = $DebugMode -or (-not (Test-Path "$env:TEMP\security_rules\debug_done.txt"))
-
-    if ($isDebug -and -not $DebugMode) {
-        Write-Log "Debug mode enabled for first run to capture unmatched rule samples"
-    }
-
-    # YARA rule parsing
-    Write-Log "Parsing YARA rules..."
-    $yaraCount = $Rules.Yara.Count
-    $processed = 0
-    $yaraBatches = [math]::Ceiling($yaraCount / $batchSize)
-    
-    for ($i = 0; $i -lt $yaraBatches; $i++) {
-        $batch = $Rules.Yara | Select-Object -Skip ($i * $batchSize) -First $batchSize
-        foreach ($rule in $batch) {
-            try {
-                if (-not (Test-Path $rule.FullName)) { continue }
-                $content = Get-Content $rule.FullName -Raw -ErrorAction Stop
-                
-                # Fixed hash extraction
-                $hashPatterns = @(
-                    "(?i)meta:.*?(md5|hash)\s*=\s*(\""|')([a-f0-9]{32})(\""|')",
-                    "(?i)meta:.*?(sha1|hash1)\s*=\s*(\""|')([a-f0-9]{40})(\""|')",
-                    "(?i)meta:.*?(sha256|hash256)\s*=\s*(\""|')([a-f0-9]{64})(\""|')",
-                    "(?i)\$[a-z0-9_]*\s*=\s*(\""|')([a-f0-9]{32,64})(\""|').*?\/\*\s*(md5|sha1|sha256)\s*\*\/"
-                )
-                
-                foreach ($pattern in $hashPatterns) {
-                    $matches = [regex]::Matches($content, $pattern)
-                    foreach ($match in $matches) {
-                        $hash = $match.Groups[3].Value
-                        $indicators += @{ Type = "Hash"; Value = $hash; Source = "YARA"; RuleFile = $rule.Name }
-                        Write-Log "Found YARA hash: $hash in $($rule.FullName)"
-                    }
-                }
-                
-                # Improved filename extraction
-                $filenamePatterns = @(
-                    "(?i)meta:.*?(filename|file_name|original_filename)\s*=\s*(\""|')([^\""']+\.(exe|dll|bat|ps1|scr|cmd))(\""|')",
-                    "(?i)\$[a-z0-9_]*\s*=\s*(\""|')([^\""']*\.(exe|dll|bat|ps1|scr|cmd))(\""|')",
-                    "(?i)fullword\s+ascii\s+(\""|')([^\""']*\.(exe|dll|bat|ps1|scr|cmd))(\""|')"
-                )
-                
-                foreach ($pattern in $filenamePatterns) {
-                    $matches = [regex]::Matches($content, $pattern)
-                    foreach ($match in $matches) {
-                        $fileName = $match.Groups[3].Value -replace '\\\\', '\'
-                        $baseFileName = [System.IO.Path]::GetFileName($fileName)
-                        if ($baseFileName -and $baseFileName -notin $systemFiles) {
-                            $indicators += @{ Type = "FileName"; Value = $baseFileName; Source = "YARA"; RuleFile = $rule.Name }
-                            Write-Log "Found YARA filename: $baseFileName in $($rule.FullName)"
-                        }
-                    }
-                }
-                
-                # Extract domains and URLs
-                $domainPatterns = @(
-                    "(?i)meta:.*?(domain|url|c2|command_and_control)\s*=\s*(\""|')([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})(\""|')",
-                    "(?i)\$[a-z0-9_]*\s*=\s*(\""|')https?://([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})(\""|')",
-                    "(?i)fullword\s+ascii\s+(\""|')https?://([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})(\""|')"
-                )
-                
-                foreach ($pattern in $domainPatterns) {
-                    $matches = [regex]::Matches($content, $pattern)
-                    foreach ($match in $matches) {
-                        $domain = $match.Groups[3].Value
-                        $indicators += @{ Type = "Domain"; Value = $domain; Source = "YARA"; RuleFile = $rule.Name }
-                        Write-Log "Found YARA domain: $domain in $($rule.FullName)"
-                    }
-                }
-                
-                if ($isDebug -and -not ($indicators | Where-Object { $_.Source -eq "YARA" -and $_.RuleFile -eq $rule.Name })) {
-                    $sample = $content -split '\n' | Select-Object -First 10
-                    $debugSamples += "YARA rule $($rule.FullName) no match:`n$($sample -join '`n')`n"
-                }
-                
-                $processed++
-                if ($processed % 25 -eq 0 -or $processed -eq $yaraCount) {
-                    Write-Log "Processed $processed/$yaraCount YARA rules"
-                }
-            }
-            catch {
-                Write-Log "Error parsing YARA rule $($rule.FullName): $_" -EntryType "Warning"
-            }
-        }
-    }
-    
-    if ($indicators.Where({$_.Source -eq "YARA"}).Count -eq 0) {
-        Write-Log "No indicators extracted from YARA rules" -EntryType "Warning"
-        if ($isDebug -and $debugSamples) {
-            $debugSamplesFile = "$env:TEMP\security_rules\yara_debug_samples.txt"
-            $debugSamples | Out-File -FilePath $debugSamplesFile -Encoding UTF8
-            Write-Log "Debug: Saved unmatched YARA rule samples to $debugSamplesFile" -EntryType "Warning"
-        }
-    }
-
-    # Sigma rule parsing
-    Write-Log "Parsing Sigma rules..."
-    $sigmaCount = $Rules.Sigma.Count
-    $processed = 0
-    $sigmaBatches = [math]::Ceiling($sigmaCount / $batchSize)
-    $yamlModule = Get-Module -ListAvailable -Name PowerShell-YAML
-    
-    for ($i = 0; $i -lt $sigmaBatches; $i++) {
-        $batch = $Rules.Sigma | Select-Object -Skip ($i * $batchSize) -First $batchSize
-        foreach ($rule in $batch) {
-            try {
-                if (-not (Test-Path $rule.FullName)) { continue }
-                $content = Get-Content $rule.FullName -Raw -ErrorAction Stop
-                $fileNames = @()
-                
-                if ($yamlModule) {
-                    $yaml = ConvertFrom-Yaml -Yaml $content -ErrorAction Stop
-                    
-                    if ($yaml.detection) {
-                        foreach ($selectionKey in $yaml.detection.Keys) {
-                            $selection = $yaml.detection[$selectionKey]
-                            if ($selection -is [hashtable] -or $selection -is [System.Collections.Specialized.OrderedDictionary]) {
-                                # Extract filenames
-                                foreach ($key in @('Image', 'TargetFilename', 'CommandLine', 'ParentImage', 'OriginalFileName', 'ProcessName', 'FileName')) {
-                                    $value = $selection[$key]
-                                    if ($value -is [string] -and $value -match '\.(exe|dll|bat|ps1|scr|cmd)$') {
-                                        $fileName = [System.IO.Path]::GetFileName($value)
-                                        if ($fileName -and $fileName -notin $systemFiles) {
-                                            $fileNames += $fileName
-                                        }
-                                    }
-                                    elseif ($value -is [array]) {
-                                        foreach ($item in $value) {
-                                            if ($item -is [string] -and $item -match '\.(exe|dll|bat|ps1|scr|cmd)$') {
-                                                $fileName = [System.IO.Path]::GetFileName($item)
-                                                if ($fileName -and $fileName -notin $systemFiles) {
-                                                    $fileNames += $fileName
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                # Check for ASR-compatible conditions
-                                foreach ($asrRule in $AsrRuleMappings.GetEnumerator()) {
-                                    foreach ($pattern in $asrRule.Value.SigmaPatterns) {
-                                        if ($content -match $pattern) {
-                                            $asrRulesToApply += @{
-                                                RuleId = $asrRule.Value.RuleId
-                                                Source = "Sigma"
-                                                RuleFile = $rule.Name
-                                            }
-                                            Write-Log "Found ASR-compatible Sigma rule: $($asrRule.Key) in $($rule.FullName)"
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                } 
-                else {
-                    $filenamePatterns = @(
-                        "(?i)(Image|TargetFilename|CommandLine|ParentImage|OriginalFileName|ProcessName|FileName):\s*['""]?.*?\\([^\s\\|]+?\.(exe|dll|bat|ps1|scr|cmd))['""]?",
-                        "(?i)(Image|TargetFilename|CommandLine|ParentImage|OriginalFileName|ProcessName|FileName):\s*['""]?([^\s\\|/]+?\.(exe|dll|bat|ps1|scr|cmd))['""]?"
-                    )
-                    
-                    foreach ($pattern in $filenamePatterns) {
-                        if ($content -match $pattern) {
-                            $fileName = $matches[2]
-                            if ($fileName -and $fileName -notin $systemFiles) {
-                                $fileNames += $fileName
-                            }
-                        }
-                    }
-                    # Check for ASR-compatible conditions without YAML module
-                    foreach ($asrRule in $AsrRuleMappings.GetEnumerator()) {
-                        foreach ($pattern in $asrRule.Value.SigmaPatterns) {
-                            if ($content -match $pattern) {
-                                $asrRulesToApply += @{
-                                    RuleId = $asrRule.Value.RuleId
-                                    Source = "Sigma"
-                                    RuleFile = $rule.Name
-                                }
-                                Write-Log "Found ASR-compatible Sigma rule: $($asrRule.Key) in $($rule.FullName)"
-                            }
-                        }
-                    }
-                }
-                
-                $fileNames = $fileNames | Select-Object -Unique
-                foreach ($fileName in $fileNames) {
-                    $indicators += @{ Type = "FileName"; Value = $fileName; Source = "Sigma"; RuleFile = $rule.Name }
-                    Write-Log "Found Sigma filename: $fileName in $($rule.FullName)"
-                }
-                
-                if ($isDebug -and -not $fileNames -and -not ($asrRulesToApply | Where-Object { $_.RuleFile -eq $rule.Name })) {
-                    $sample = $content -split '\n' | Select-Object -First 10
-                    $debugSamples += "Sigma rule $($rule.FullName) no match:`n$($sample -join '`n')`n"
-                }
-                
-                $processed++
-                if ($processed % 1000 -eq 0 -or $processed -eq $sigmaCount) {
-                    Write-Log "Processed $processed/$sigmaCount Sigma rules"
-                }
-            }
-            catch {
-                Write-Log "Error parsing Sigma rule $($rule.FullName): $_" -EntryType "Warning"
-            }
-        }
-    }
-    
-    if ($indicators.Where({$_.Source -eq "Sigma"}).Count -eq 0 -and $asrRulesToApply.Count -eq 0) {
-        Write-Log "No indicators or ASR rules extracted from Sigma rules" -EntryType "Warning"
-        if ($isDebug -and $debugSamples) {
-            $debugSamplesFile = "$env:TEMP\security_rules\sigma_debug_samples.txt"
-            $debugSamples | Out-File -FilePath $debugSamplesFile -Encoding UTF8
-            Write-Log "Debug: Saved unmatched Sigma rule samples to $debugSamplesFile" -EntryType "Warning"
-        }
-    }
-
-    # Snort rule parsing
-    Write-Log "Parsing Snort rules..."
-    $totalIPs = 0
-    $totalDomains = 0
-    $ipList = @()
-    $domainList = @()
-    
-    foreach ($snortFile in $Rules.Snort) {
-        if (Test-Path $snortFile) {
-            try {
-                $lines = Get-Content $snortFile -ErrorAction Stop
-                $lineCount = $lines.Count
-                $processed = 0
-                
-                for ($i = 0; $i -lt $lineCount; $i++) {
-                    $line = $lines[$i]
-                    
-                    if ($line -match '(?:^|\s)(?:alert|log|pass|drop|reject|sdrop)\s+\w+\s+(?:\$\w+\s+)?(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})(?:/\d{1,2})?\s+\w+\s+(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})(?:/\d{1,2})?') {
-                        $srcIp = $matches[1]
-                        $dstIp = $matches[2]
-                        
-                        foreach ($ip in @($srcIp, $dstIp)) {
-                            if ($ip -notmatch "^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|127\.|0\.)") {
-                                $ipList += @{ Type = "IP"; Value = $ip; Source = "Snort"; RuleFile = [System.IO.Path]::GetFileName($snortFile) }
-                                $totalIPs++
-                                Write-Log "Found Snort IP: $ip in $snortFile"
-                            }
-                        }
-                    }
-                    
-                    if ($line -match '\[((\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(?:,\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})*))\]') {
-                        $ipString = $matches[1]
-                        $ips = $ipString -split ',' | ForEach-Object { $_.Trim() }
-                        foreach ($ip in $ips) {
-                            if ($ip -match '^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$' -and $ip -notmatch "^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|127\.|0\.)") {
-                                $ipList += @{ Type = "IP"; Value = $ip; Source = "Snort"; RuleFile = [System.IO.Path]::GetFileName($snortFile) }
-                                $totalIPs++
-                                Write-Log "Found Snort IP: $ip in $snortFile (Emerging Threats format)"
-                            }
-                        }
-                    }
-                    
-                    if ($line -match "content:.*?(\""|')([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})(\""|')") {
-                        $domain = $matches[2]
-                        $domainList += @{ Type = "Domain"; Value = $domain; Source = "Snort"; RuleFile = [System.IO.Path]::GetFileName($snortFile) }
-                        $totalDomains++
-                        Write-Log "Found Snort domain: $domain in $snortFile"
-                    }
-                    
-                    $processed++
-                    if ($processed % 250 -eq 0) {
-                        Write-Log "Processed $processed/$lineCount lines in ${snortFile}"
-                    }
-                }
-                
-                Write-Log "Completed parsing $processed/$lineCount lines in ${snortFile}"
-            }
-            catch {
-                Write-Log "Error parsing Snort file ${snortFile}: $_" -EntryType "Warning"
-            }
-        } else {
-            Write-Log "Snort file ${snortFile} does not exist" -EntryType "Warning"
-        }
-    }
-    
-    $indicators += $ipList
-    $indicators += $domainList
-    
-    $uniqueIPs = ($ipList | Select-Object -Property Value -Unique).Count
-    $uniqueDomains = ($domainList | Select-Object -Property Value -Unique).Count
-    
-    Write-Log "Extracted $totalIPs total IPs ($uniqueIPs unique), $totalDomains domains ($uniqueDomains unique) from Snort rules"
-    
-    if ($indicators.Where({$_.Source -eq "Snort"}).Count -eq 0) {
-        Write-Log "No indicators extracted from Snort rules" -EntryType "Warning"
-    }
-
-    # Deduplicate indicators
-    $uniqueIndicators = @()
-    $indicators | Group-Object -Property Type, Value | ForEach-Object {
-        $uniqueIndicator = $_.Group[0]
-        if ($_.Group[0].PSObject.Properties.Name -contains "Source") {
-            $sources = ($_.Group | Select-Object -ExpandProperty Source -Unique) -join ','
-            $uniqueIndicator.Source = $sources
-        } else {
-            $uniqueIndicator | Add-Member -NotePropertyName "Source" -NotePropertyValue "Unknown" -Force
-        }
-        $uniqueIndicators += $uniqueIndicator
-    }
-
-    # Deduplicate ASR rules
-    $uniqueAsrRules = $asrRulesToApply | Group-Object -Property RuleId | ForEach-Object { $_.Group[0] }
-    
-    Write-Log "Parsed $($uniqueIndicators.Count) unique indicators from rules (Hashes: $($uniqueIndicators.Where({$_.Type -eq 'Hash'}).Count), Files: $($uniqueIndicators.Where({$_.Type -eq 'FileName'}).Count), IPs: $($uniqueIndicators.Where({$_.Type -eq 'IP'}).Count), Domains: $($uniqueIndicators.Where({$_.Type -eq 'Domain'}).Count))."
-    Write-Log "Identified $($uniqueAsrRules.Count) unique ASR rules from Sigma rules"
-
-    if ($isDebug -and -not $DebugMode) {
-        New-Item -Path "$env:TEMP\security_rules\debug_done.txt" -ItemType File -Force | Out-Null
-    }
-    
-    return @{
-        Indicators = $uniqueIndicators
-        AsrRules = $uniqueAsrRules
-    }
-}
-
-# Apply rules to Windows Defender ASR, Firewall, and Custom Threats
-function Apply-SecurityRules {
-    param (
-        $IndicatorsAndRules,
-        $Config
-    )
-
-    $Indicators = $IndicatorsAndRules.Indicators
-    $AsrRules = $IndicatorsAndRules.AsrRules
-
-    Write-Log "Applying security rules..."
-    
-    try {
-        $existingFirewallRules = Get-NetFirewallRule -Name "Block_C2_*" -ErrorAction SilentlyContinue
-        if ($existingFirewallRules) {
-            $existingFirewallRules | Remove-NetFirewallRule -ErrorAction SilentlyContinue
-            Write-Log "Removed $($existingFirewallRules.Count) existing firewall rules"
-        }
-        
-        $existingThreats = Get-MpThreatDetection | Where-Object { $_.ThreatName -like "GRules_*" }
-        foreach ($threat in $existingThreats) {
-            try {
-                Remove-MpThreat -ThreatID $threat.ThreatID -ErrorAction SilentlyContinue
-                Write-Log "Removed existing custom threat: $($threat.ThreatName)"
-            }
-            catch {
-                Write-Log "Error removing custom threat $($threat.ThreatName): $_" -EntryType "Warning"
-            }
-        }
-    }
-    catch {
-        Write-Log "Error cleaning up existing rules: $_" -EntryType "Warning"
-    }
-    
-    # Apply ASR rules
-    $processedAsr = 0
-    foreach ($asrRule in $AsrRules) {
-        try {
-            $ruleId = $asrRule.RuleId
-            $asrRules = Get-MpPreference | Select-Object -ExpandProperty AttackSurfaceReductionRules_Ids -ErrorAction SilentlyContinue
-            $asrActions = Get-MpPreference | Select-Object -ExpandProperty AttackSurfaceReductionRules_Actions -ErrorAction SilentlyContinue
-            
-            $asrIndex = $null
-            if ($asrRules) {
-                $asrIndex = $asrRules.IndexOf($ruleId)
-            }
-            
-            if ($asrIndex -ge 0) {
-                if ($asrActions[$asrIndex] -ne 1) {
-                    Add-MpPreference -AttackSurfaceReductionRules_Ids $ruleId -AttackSurfaceReductionRules_Actions Enabled
-                    Write-Log "Enabled existing ASR rule $ruleId from $($asrRule.Source)"
-                }
-            }
-            else {
-                Add-MpPreference -AttackSurfaceReductionRules_Ids $ruleId -AttackSurfaceReductionRules_Actions Enabled
-                Write-Log "Added and enabled ASR rule $ruleId from $($asrRule.Source)"
-            }
-            $processedAsr++
-        }
-        catch {
-            Write-Log "Error applying ASR rule ${ruleId}: $_" -EntryType "Warning"
-        }
-    }
-    
-    # Apply hash-based threats
-    $hashIndicators = $Indicators | Where-Object { $_.Type -eq "Hash" }
-    $hashCount = $hashIndicators.Count
-    $processedHash = 0
-    
-    foreach ($indicator in $hashIndicators) {
-        try {
-            $hash = $indicator.Value
-            $threatName = "GRules_Hash_$hash"
-            $description = "Malicious file hash detected from $($indicator.Source) rules"
-            
-            $tempFile = "$env:TEMP\GRules_threat_$hash.txt"
-            $hash | Out-File -FilePath $tempFile -Encoding ASCII
-            
-            Add-MpPreference -ThreatIDDefaultAction_Actions Block -ThreatIDDefaultAction_Ids $threatName
-            Add-MpPreference -SubmissionFile $tempFile
-            Write-Log "Added custom threat for hash: $hash"
-            $processedHash++
-            
-            Remove-Item -Path $tempFile -Force -ErrorAction SilentlyContinue
-        }
-        catch {
-            Write-Log "Error applying custom threat for hash $($indicator.Value): $_" -EntryType "Warning"
-        }
-    }
-    
-    # Apply filename-based threats
-    $fileIndicators = $Indicators | Where-Object { $_.Type -eq "FileName" }
-    $fileCount = $fileIndicators.Count
-    $processedFile = 0
-    
-    foreach ($indicator in $fileIndicators) {
-        try {
-            $fileName = $indicator.Value
-            $threatName = "GRules_File_$([System.IO.Path]::GetFileNameWithoutExtension($fileName))"
-            $description = "Malicious filename detected from $($indicator.Source) rules"
-            
-            Add-MpPreference -ThreatIDDefaultAction_Actions Block -ThreatIDDefaultAction_Ids $threatName
-            Add-MpPreference -AttackSurfaceReductionOnlyExclusions $fileName
-            Write-Log "Added custom threat and ASR exclusion for filename: $fileName"
-            $processedFile++
-        }
-        catch {
-            Write-Log "Error applying custom threat for filename $($indicator.Value): $_" -EntryType "Warning"
-        }
-    }
-    
-    # Apply IP-based firewall rules
-    $ipIndicators = $Indicators | Where-Object { $_.Type -eq "IP" }
-    $ipCount = $ipIndicators.Count
-    $processedIp = 0
-    $batchSize = $Config.FirewallBatchSize
-    
-    for ($i = 0; $i -lt $ipCount; $i += $batchSize) {
-        $batch = $ipIndicators | Select-Object -Skip $i -First $batchSize
-        $batchIPs = $batch | ForEach-Object { $_.Value }
-        
-        if ($batchIPs.Count -gt 0) {
-            try {
-                $batchName = "Block_C2_Batch_$($i / $batchSize)"
-                New-NetFirewallRule -Name $batchName -DisplayName $batchName -Direction Outbound -Action Block `
-                                   -RemoteAddress $batchIPs -ErrorAction Stop
-                $processedIp += $batchIPs.Count
-                Write-Log "Created batch firewall rule $batchName with $($batchIPs.Count) IPs"
-            }
-            catch {
-                Write-Log "Error creating batch firewall rule: $_" -EntryType "Warning"
-                
-                foreach ($ip in $batchIPs) {
-                    try {
-                        $ruleName = "Block_C2_$ip"
-                        New-NetFirewallRule -Name $ruleName -DisplayName $ruleName -Direction Outbound -Action Block `
-                                           -RemoteAddress $ip -ErrorAction Stop
-                        $processedIp++
-                        Write-Log "Blocked IP via individual firewall rule: $ip"
-                    }
-                    catch {
-                        Write-Log "Error applying individual firewall rule for ${ip}: $_" -EntryType "Warning"
-                    }
-                }
-            }
-        }
-    }
-    
-    Write-Log "Completed applying $processedAsr/$($AsrRules.Count) ASR rules, $processedHash/$hashCount hash-based threats, $processedFile/$fileCount filename-based threats, and $processedIp/$ipCount Firewall rules."
-    
-    if ($Config.Telemetry.Enabled) {
-        $telemetryData = @{
-            Timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-            RulesApplied = @{
-                ASR = $processedAsr
-                Threats = $processedHash + $processedFile
-                Firewall = $processedIp
-            }
-            IndicatorCounts = @{
-                Total = $Indicators.Count
-                ByType = @{
-                    Hash = ($Indicators | Where-Object { $_.Type -eq "Hash" }).Count
-                    FileName = ($Indicators | Where-Object { $_.Type -eq "FileName" }).Count
-                    IP = ($Indicators | Where-Object { $_.Type -eq "IP" }).Count
-                    Domain = ($Indicators | Where-Object { $_.Type -eq "Domain" }).Count
-                }
-            }
-        }
-        
-        $telemetryPath = $Config.Telemetry.Path
-        $telemetryDir = Split-Path -Parent $telemetryPath
-        
-        if (-not (Test-Path $telemetryDir)) {
-            New-Item -ItemType Directory -Path $telemetryDir -Force | Out-Null
-        }
-        
-        $telemetryData | ConvertTo-Json -Depth 4 | Out-File -FilePath $telemetryPath -Encoding UTF8
-        Write-Log "Saved telemetry data to $telemetryPath"
-    }
-}
-
-# Monitor processes in real-time
-function Start-ProcessMonitor {
-    param (
-        $Indicators,
-        $Config
-    )
-
-    Write-Log "Starting process monitoring..."
-    $fileNames = $Indicators | Where-Object { $_.Type -eq "FileName" } | ForEach-Object { $_.Value }
-    
-    if ($fileNames.Count -eq 0) {
-        Write-Log "No file indicators to monitor" -EntryType "Warning"
-        return
-    }
-    
-    $fileNameHash = @{}
-    foreach ($fileName in $fileNames) {
-        $fileNameHash[$fileName.ToLower()] = $true
-    }
-    
-    $telemetryDir = "$env:TEMP\security_rules\telemetry"
-    $blockedProcessLog = "$telemetryDir\blocked_processes.json"
-    
-    if (-not (Test-Path $telemetryDir)) {
-        New-Item -ItemType Directory -Path $telemetryDir -Force | Out-Null
-    }
-    
-    if (-not (Test-Path $blockedProcessLog)) {
-        @{ BlockedProcesses = @() } | ConvertTo-Json | Out-File -FilePath $blockedProcessLog -Encoding UTF8
-    }
-    
-    Register-WmiEvent -Query "SELECT * FROM __InstanceCreationEvent WITHIN 1 WHERE TargetInstance ISA 'Win32_Process'" -Action {
-        $process = $event.SourceEventArgs.NewEvent.TargetInstance
-        $processName = $process.Name.ToLower()
-        
-        if ($fileNameHash.ContainsKey($processName)) {
-            try {
-                $processInfo = @{
-                    Name = $process.Name
-                    PID = $process.ProcessId
-                    Path = $process.ExecutablePath
-                    CommandLine = $process.CommandLine
-                    ParentPID = $process.ParentProcessId
-                    CreationTime = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-                }
-                
-                Stop-Process -Id $process.ProcessId -Force -ErrorAction Stop
-                
-                $logMessage = "Blocked malicious process: $($process.Name) (PID: $($process.ProcessId), Path: $($process.ExecutablePath))"
-                Write-EventLog -LogName "Application" -Source "GRules" -EventId 1001 -EntryType "Warning" -Message $logMessage
-                
-                $telemetryPath = "$env:TEMP\security_rules\telemetry\blocked_processes.json"
-                $telemetry = Get-Content -Path $telemetryPath -Raw | ConvertFrom-Json
-                
-                $telemetry.BlockedProcesses += $processInfo
-                
-                if ($telemetry.BlockedProcesses.Count -gt 100) {
-                    $telemetry.BlockedProcesses = $telemetry.BlockedProcesses | Select-Object -Last 100
-                }
-                
-                $telemetry | ConvertTo-Json -Depth 4 | Out-File -FilePath $telemetryPath -Encoding UTF8
-            }
-            catch {
-                $errorMessage = "Error blocking process $($process.Name): $_"
-                Write-EventLog -LogName "Application" -Source "GRules" -EventId 1002 -EntryType "Error" -Message $errorMessage
-            }
-        }
-    }
-    
-    Write-Log "Process monitoring started with $($fileNames.Count) file indicators."
-}
-
 # Main Execution
-function Main {
+try {
+    Write-Log "Starting GRules execution..."
     Initialize-EventLog
-    $rules = Get-SecurityRules -Config $Global:Config
-    $indicatorsAndRules = Parse-Rules -Rules $rules -Config $Global:Config
-    Apply-SecurityRules -IndicatorsAndRules $indicatorsAndRules -Config $Global:Config
-    if ($Monitor) {
-        Start-ProcessMonitor -Indicators $indicatorsAndRules.Indicators -Config $Global:Config
-    }
-    Write-Log "Execution completed successfully."
-}
 
-Main
+    # Ensure process auditing is enabled
+    if (-not (Ensure-ProcessAuditing)) {
+        Write-Log "Process creation auditing could not be enabled. Continuing with other tasks (process monitoring will be skipped)." -EntryType "Warning"
+        $Global:ExitCode = 1  # Indicate partial failure
+    }
+
+    # Get rules
+    $rules = Get-SecurityRules -Config $Global:Config
+    if (-not $rules.Yara -and -not $rules.Sigma -and -not $rules.Snort) {
+        Write-Log "No rules retrieved. Exiting." -EntryType "Error"
+        $Global:ExitCode = 1
+        exit $Global:ExitCode
+    }
+
+    # Parse rules
+    $indicators = Parse-Rules -Rules $rules
+    if (-not $indicators.Hashes -and -not $indicators.Files -and -not $indicators.IPs -and -not $indicators.Domains -and -not $indicators.AsrRules) {
+        Write-Log "No indicators parsed from rules. Exiting." -EntryType "Error"
+        $Global:ExitCode = 1
+        exit $Global:ExitCode
+    }
+
+    # Apply rules
+    Apply-SecurityRules -Indicators $indicators
+
+    # Monitor processes
+    Monitor-Processes
+
+    Write-Log "GRules execution completed successfully"
+} catch {
+    Write-Log "Script execution failed: $_" -EntryType "Error"
+    $Global:ExitCode = 1
+} finally {
+    Write-Log "Script execution finished with exit code $Global:ExitCode"
+    exit $Global:ExitCode
+}
