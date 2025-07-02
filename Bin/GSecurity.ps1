@@ -1,16 +1,16 @@
-# GSecurity.ps1 by Gorstak
+# GSecurity-RootkitHunter.ps1
+# Merged version with persistent background monitoring
 
 function Register-SystemLogonScript {
     param (
-        [string]$TaskName = "RunGSecurityAtLogon"
+        [string]$TaskName = "GSecurityRootkitHunter"
     )
 
-    # Define paths
     $scriptSource = $MyInvocation.MyCommand.Path
     if (-not $scriptSource) {
         $scriptSource = $PSCommandPath
         if (-not $scriptSource) {
-            Write-Output "Error: Could not determine script path."
+            Write-Log "Error: Could not determine script path." -EntryType "Error"
             return
         }
     }
@@ -18,33 +18,29 @@ function Register-SystemLogonScript {
     $targetFolder = "C:\Windows\Setup\Scripts\Bin"
     $targetPath = Join-Path $targetFolder (Split-Path $scriptSource -Leaf)
 
-    # Create required folders
     if (-not (Test-Path $targetFolder)) {
         New-Item -Path $targetFolder -ItemType Directory -Force | Out-Null
-        Write-Output "Created folder: $targetFolder"
+        Write-Log "Created folder: $targetFolder"
     }
 
-    # Copy the script
     try {
         Copy-Item -Path $scriptSource -Destination $targetPath -Force -ErrorAction Stop
-        Write-Output "Copied script to: $targetPath"
+        Write-Log "Copied script to: $targetPath"
     } catch {
-        Write-Output "Failed to copy script: $_"
+        Write-Log "Failed to copy script: $_" -EntryType "Error"
         return
     }
 
-    # Define the scheduled task action and trigger
-    $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-ExecutionPolicy Bypass -File `"$targetPath`""
+    $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-ExecutionPolicy Bypass -File `"$targetPath`" -WindowStyle Hidden"
     $trigger = New-ScheduledTaskTrigger -AtLogOn
     $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
 
-    # Register the task
     try {
         Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
         Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Principal $principal
-        Write-Output "Scheduled task '$TaskName' created to run at user logon under SYSTEM."
+        Write-Log "Scheduled task '$TaskName' created to run at logon"
     } catch {
-        Write-Output "Failed to register task: $_"
+        Write-Log "Failed to register task: $_" -EntryType "Error"
     }
 }
 
@@ -53,26 +49,42 @@ function Write-Log {
         [string]$Message,
         [string]$EntryType = "Information"
     )
+    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $logEntry = "[$timestamp] [$EntryType] $Message"
+    
     try {
         if (-not [System.Diagnostics.EventLog]::SourceExists("GSecurity")) {
             New-EventLog -LogName Application -Source "GSecurity"
         }
         Write-EventLog -LogName Application -Source "GSecurity" -EntryType $EntryType -EventId 1000 -Message $Message
     } catch {
-        Write-Output "$EntryType`: $Message"
+        Add-Content -Path "$env:TEMP\GSecurity.log" -Value $logEntry
+    }
+    
+    # Also output to console when running interactively
+    if ($Host.Name -match "ConsoleHost") {
+        switch ($EntryType) {
+            "Error" { Write-Host $logEntry -ForegroundColor Red }
+            "Warning" { Write-Host $logEntry -ForegroundColor Yellow }
+            default { Write-Host $logEntry -ForegroundColor White }
+        }
     }
 }
 
 function Disable-Network-Briefly {
-    $adapters = Get-NetAdapter | Where-Object { $_.Status -eq "Up" }
-    foreach ($adapter in $adapters) {
-        Disable-NetAdapter -Name $adapter.Name -Confirm:$false -ErrorAction SilentlyContinue
+    try {
+        $adapters = Get-NetAdapter | Where-Object { $_.Status -eq "Up" }
+        foreach ($adapter in $adapters) {
+            Disable-NetAdapter -Name $adapter.Name -Confirm:$false -ErrorAction SilentlyContinue
+        }
+        Start-Sleep -Seconds 3
+        foreach ($adapter in $adapters) {
+            Enable-NetAdapter -Name $adapter.Name -Confirm:$false -ErrorAction SilentlyContinue
+        }
+        Write-Log "Network briefly disabled"
+    } catch {
+        Write-Log "Failed to toggle network: $_" -EntryType "Error"
     }
-    Start-Sleep -Seconds 3
-    foreach ($adapter in $adapters) {
-        Enable-NetAdapter -Name $adapter.Name -Confirm:$false -ErrorAction SilentlyContinue
-    }
-    Write-Log "Network briefly disabled"
 }
 
 function Add-XSSFirewallRule {
@@ -97,67 +109,105 @@ function Add-XSSFirewallRule {
     }
 }
 
-function Terminate-Rootkits {
-    try {
-        $connections = Get-NetTCPConnection | Where-Object {
-            $_.RemoteAddress -match '^10\.|^192\.168\.|^172\.(1[6-9]|2[0-9]|3[01])\.'
-        }
-        $lanProcIds = $connections.OwningProcess | Sort-Object -Unique
+function Start-RootkitHunter {
+    # Whitelist (safe processes)
+    $whitelist = @(
+        "svchost", "System", "lsass", "wininit", "csrss", "winlogon", 
+        "services", "explorer", "dwm", "spoolsv", "taskhostw", "WmiPrvSE",
+        "msmpeng", "NisSrv", "ShellExperienceHost", "SearchIndexer", "RuntimeBroker"
+    )
 
-        foreach ($pid in $lanProcIds) {
-            try {
-                $proc = Get-Process -Id $pid -ErrorAction Stop
-                $exePath = $proc.Path
+    while ($true) {
+        try {
+            # 1. Check hidden processes (WMI vs tasklist)
+            $visible = tasklist /fo csv | ConvertFrom-Csv | Select-Object -ExpandProperty "PID"
+            $all = Get-WmiObject Win32_Process | Select-Object -ExpandProperty ProcessId
+            $hidden = Compare-Object -ReferenceObject $visible -DifferenceObject $all | 
+                     Where-Object { $_.SideIndicator -eq "=>" } | 
+                     Select-Object -ExpandProperty InputObject
 
-                if ($exePath) {
-                    $signature = Get-AuthenticodeSignature -FilePath $exePath
-                    if ($signature.Status -ne 'Valid') {
-                        Write-Log "Terminating UNSIGNED process: $($proc.ProcessName) (PID: $pid)"
-                        Stop-Process -Id $pid -Force
-                    } else {
-                        Write-Log "Skipping signed process: $($proc.ProcessName) (PID: $pid)"
-                    }
-                } else {
-                    Write-Log "Path unknown for process: $($proc.ProcessName) (PID: $pid)" -EntryType "Warning"
-                }
-            } catch {
-                Write-Log "Error processing PID $pid`: $($_.ToString())" -EntryType "Warning"
+            # 2. Check network connections
+            $connections = Get-NetTCPConnection | Where-Object {
+                $_.RemoteAddress -match '^10\.|^192\.168\.|^172\.(1[6-9]|2[0-9]|3[01])\.'
             }
+            $lanProcIds = $connections.OwningProcess | Sort-Object -Unique
+
+            # Combine both detection methods
+            $targetPids = ($hidden + $lanProcIds) | Select-Object -Unique
+
+            foreach ($pid in $targetPids) {
+                try {
+                    $proc = Get-Process -Id $pid -ErrorAction Stop
+                    $procName = $proc.ProcessName
+                    $isWhitelisted = ($whitelist -contains $procName)
+
+                    if (-not $isWhitelisted) {
+                        $exePath = $proc.Path
+                        $shouldKill = $false
+
+                        if ($exePath) {
+                            $signature = Get-AuthenticodeSignature -FilePath $exePath
+                            if ($signature.Status -ne 'Valid') {
+                                $shouldKill = $true
+                                $reason = "Unsigned process"
+                            }
+                        } else {
+                            $shouldKill = $true
+                            $reason = "No executable path"
+                        }
+
+                        if ($shouldKill) {
+                            Stop-Process -Id $pid -Force -ErrorAction Stop
+                            Write-Log "Terminated suspicious process: $procName (PID: $pid) - $reason"
+                        }
+                    }
+                } catch {
+                    Write-Log "Error processing PID $pid`: $_" -EntryType "Warning"
+                }
+            }
+
+            # 3. XSS monitoring
+            $pattern = '(?i)(<script|javascript:|onerror=|onload=|alert\()'
+            $procs = Get-WmiObject Win32_Process | Where-Object { $_.CommandLine -match $pattern }
+            
+            foreach ($proc in $procs) {
+                if ($proc.CommandLine -match 'https?://[^\s"]+') {
+                    $url = $matches[0]
+                    Disable-Network-Briefly
+                    Add-XSSFirewallRule -url $url
+                    Write-Log "XSS pattern detected in process: $($proc.Name) (PID: $($proc.ProcessId))"
+                }
+            }
+
+            Start-Sleep -Seconds 30
+        } catch {
+            Write-Log "Main monitoring error: $_" -EntryType "Error"
+            Start-Sleep -Seconds 60
         }
-    } catch {
-        Write-Log "Error during rootkit detection: $($_.ToString())" -EntryType "Error"
     }
 }
 
-# Add to Start-RootkitHunter() before the main loop
-Set-ProcessMitigation -System -Enable DisableExtensionPoints
-Set-NetFirewallProfile -All -DefaultInboundAction Block -DefaultOutboundAction Allow
-New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Lsa" -Name "RunAsPPL" -Value 1 -Force
 
-# Register the scheduled task
-Register-SystemLogonScript
+Set-ProcessMitigation -System -Enable DisableExtensionPoints  # Blocks process hollowing
+Set-NetFirewallProfile -All -DefaultInboundAction Block      # Locks down inbound traffic
+New-ItemProperty [...] -Name "RunAsPPL" -Value 1            # Protects LSASS
 
-# Run Terminate-Rootkits inline immediately
-Terminate-Rootkits
 
-# Start XSS monitoring job
-$job = Start-Job -ScriptBlock {
-    $pattern = '(?i)(<script|javascript:|onerror=|onload=|alert\()'
+# Main execution
+if ($MyInvocation.MyCommand.CommandType -eq "Script") {
+    Register-SystemLogonScript
+    
+    # Start as background job if not already running
+    if (-not (Get-Job -Name "GSecurityRootkitHunter" -ErrorAction SilentlyContinue)) {
+        Start-Job -Name "GSecurityRootkitHunter" -ScriptBlock {
+            . $using:PSCommandPath
+            Start-RootkitHunter
+        } | Out-Null
+        Write-Log "Started background monitoring job"
+    } else {
+        Write-Log "Monitoring job already running"
+    }
 
-    Register-WmiEvent -Query "SELECT * FROM __InstanceCreationEvent WITHIN 2 WHERE TargetInstance ISA 'Win32_Process'" -Action {
-        $proc = $Event.SourceEventArgs.NewEvent.TargetInstance
-        $cmdline = $proc.CommandLine
-
-        if ($cmdline -match $pattern) {
-            Write-Host "`nPotential XSS detected in: $cmdline"
-
-            if ($cmdline -match 'https?://[^\s"]+') {
-                $url = $matches[0]
-                Disable-Network-Briefly
-                Add-XSSFirewallRule -url $url
-            }
-        }
-    } | Out-Null
-
-    while ($true) { Start-Sleep -Seconds 5 }
+    # Run immediate scan
+    Start-RootkitHunter
 }
