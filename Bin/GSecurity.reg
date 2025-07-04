@@ -4005,7 +4005,7 @@ Windows Registry Editor Version 5.00
 "DeviceDumpEnabled"=dword:00000000
 
 [HKEY_LOCAL_MACHINE\System\CurrentControlSet\Control\GraphicsDrivers]
-"HwSchMode"=dword:00000000
+"HwSchMode"=dword:00000002
 
 [HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services]
 "fDenyTSConnections"=dword:00000001
